@@ -26,6 +26,9 @@
 .PARAMETER FunctionHostname
   Override the Function hostname. Default: read from `azd env get-values`.
 
+.PARAMETER FunctionKey
+  Override the Function host key. Default: read from `az functionapp keys list`.
+
 .EXAMPLE
   pwsh ./scripts/load-test.ps1
   pwsh ./scripts/load-test.ps1 -Count 200 -Concurrency 25
@@ -39,21 +42,45 @@ param (
     [int] $Concurrency = 10,
 
     [Parameter()]
-    [string] $FunctionHostname
+    [string] $FunctionHostname,
+
+    [Parameter()]
+    [string] $FunctionKey
 )
 
 $ErrorActionPreference = 'Stop'
 
+$envValues = azd env get-values | Out-String
+
+function Get-AzdEnvValue {
+    param ([string] $Name)
+    if ($envValues -match "^${Name}=`"?([^`"`r`n]+?)`"?\s*$") {
+        return $matches[1]
+    }
+    return $null
+}
+
 if (-not $FunctionHostname) {
-    $values = azd env get-values | Out-String
-    # Match the value after FUNCTION_APP_HOSTNAME=, optionally quoted. Use \r\n
-    # in the negated character class so we don't match across lines (the
-    # previous backtick-escaped form was treated as literal characters inside a
-    # single-quoted string and truncated hostnames containing 'r' or 'n').
-    if ($values -match 'FUNCTION_APP_HOSTNAME="?([^"\r\n]+?)"?\s*$' -or $values -match 'FUNCTION_APP_HOSTNAME="?([^"\r\n]+?)"?(?:\r?\n|$)') {
-        $FunctionHostname = $matches[1]
-    } else {
-        throw "Could not resolve FUNCTION_APP_HOSTNAME from `azd env get-values`. Pass -FunctionHostname explicitly."
+    $FunctionHostname = Get-AzdEnvValue 'FUNCTION_APP_HOSTNAME'
+    if (-not $FunctionHostname) {
+        throw "Could not resolve FUNCTION_APP_HOSTNAME from ``azd env get-values``. Pass -FunctionHostname explicitly."
+    }
+}
+
+if (-not $FunctionKey) {
+    $functionAppName = Get-AzdEnvValue 'FUNCTION_APP_NAME'
+    $resourceGroup   = Get-AzdEnvValue 'AZURE_RESOURCE_GROUP'
+    if (-not $functionAppName -or -not $resourceGroup) {
+        throw "Could not resolve FUNCTION_APP_NAME / AZURE_RESOURCE_GROUP from ``azd env get-values``. Pass -FunctionKey explicitly."
+    }
+    Write-Host "Fetching function key for $functionAppName..." -ForegroundColor DarkGray
+    $keysJson = az functionapp keys list --name $functionAppName --resource-group $resourceGroup 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "az functionapp keys list failed: $keysJson"
+    }
+    $FunctionKey = ($keysJson | Out-String | ConvertFrom-Json).functionKeys.default
+    if (-not $FunctionKey) {
+        throw "default function key was empty. Verify the Function App exists and has a default host key."
     }
 }
 
@@ -70,6 +97,7 @@ $results = @(1..$Count) | ForEach-Object -Parallel {
             -Method             POST `
             -Body               $using:body `
             -ContentType        'application/json' `
+            -Headers            @{ 'x-functions-key' = $using:FunctionKey } `
             -SkipHttpErrorCheck `
             -TimeoutSec         60
         [pscustomobject]@{

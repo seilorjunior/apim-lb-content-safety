@@ -4,13 +4,31 @@ param location string
 param functionAppName string
 param appServicePlanName string
 param storageAccountName string
+param apimName string
 param apimGatewayUrl string
+param apimSubscriptionName string
+@description('Browser CORS allow-list. Defaults to [] (no browser origins). The Function is meant for server-to-server traffic; only widen this if you fully trust the listed origins.')
+param corsAllowedOrigins array = []
+@description('Maximum request body in bytes (mirrored to MAX_REQUEST_BODY_BYTES). Default 10 MiB matches Content Safety upstream limits.')
+param maxRequestBodyBytes int = 10 * 1024 * 1024
 @secure()
 param appInsightsConnectionString string
 param tags object
 
 resource storage 'Microsoft.Storage/storageAccounts@2024-01-01' existing = {
   name: storageAccountName
+}
+
+// Read the APIM subscription primary key inline so the function can authenticate
+// to the APIM API. listSecrets() resolves at deployment time and the value is
+// only emitted into appSettings (which are KV-encrypted at rest by App Service).
+resource apim 'Microsoft.ApiManagement/service@2024-05-01' existing = {
+  name: apimName
+}
+
+resource apimSubscription 'Microsoft.ApiManagement/service/subscriptions@2024-05-01' existing = {
+  parent: apim
+  name: apimSubscriptionName
 }
 
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
@@ -46,9 +64,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
       ftpsState: 'Disabled'
       http20Enabled: true
       cors: {
-        allowedOrigins: [
-          '*'
-        ]
+        allowedOrigins: corsAllowedOrigins
       }
       appSettings: [
         // Storage via managed identity. On FC1, setting only __accountName
@@ -70,6 +86,14 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'APIM_GATEWAY_URL'
           value: apimGatewayUrl
+        }
+        {
+          name: 'APIM_SUBSCRIPTION_KEY'
+          value: apimSubscription.listSecrets().primaryKey
+        }
+        {
+          name: 'MAX_REQUEST_BODY_BYTES'
+          value: string(maxRequestBodyBytes)
         }
         {
           name: 'CONTENT_SAFETY_API_VERSION'

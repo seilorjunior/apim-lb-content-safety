@@ -215,8 +215,23 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
     protocols: [
       'https'
     ]
-    subscriptionRequired: false
+    subscriptionRequired: true
     apiType: 'http'
+  }
+}
+
+// Per-API subscription bound to the Function App. The function reads the primary
+// key at deployment time via listSecrets() and forwards it on every upstream call
+// as `Ocp-Apim-Subscription-Key`. Naming is stable so re-deploys re-use the same
+// key (no caller-side rotation needed).
+resource functionSubscription 'Microsoft.ApiManagement/service/subscriptions@2024-05-01' = {
+  parent: apim
+  name: 'function-app'
+  properties: {
+    displayName: 'Content Safety - Function App'
+    scope: api.id
+    state: 'active'
+    allowTracing: false
   }
 }
 
@@ -616,3 +631,4 @@ output id string = apim.id
 output name string = apim.name
 output gatewayUrl string = apim.properties.gatewayUrl
 output principalId string = apim.identity.principalId
+output functionSubscriptionName string = functionSubscription.name

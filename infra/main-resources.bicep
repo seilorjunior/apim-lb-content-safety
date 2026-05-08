@@ -14,6 +14,8 @@ param redisSku string
 param redisLocation string
 param idempotencyTtlSeconds int
 param useProductionGuards bool
+param corsAllowedOrigins array
+param maxRequestBodyBytes int
 
 var effectiveRedisLocation = empty(redisLocation) ? location : redisLocation
 
@@ -135,7 +137,11 @@ module functionApp 'modules/function.bicep' = {
     functionAppName: 'func-${prefix}'
     appServicePlanName: 'plan-${prefix}'
     storageAccountName: storage.outputs.name
+    apimName: apim.outputs.name
     apimGatewayUrl: apim.outputs.gatewayUrl
+    apimSubscriptionName: apim.outputs.functionSubscriptionName
+    corsAllowedOrigins: corsAllowedOrigins
+    maxRequestBodyBytes: maxRequestBodyBytes
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     tags: tags
   }
@@ -161,6 +167,7 @@ module rbac 'modules/rbac.bicep' = {
 // -----------------------------------------------------------------------------
 // Outputs surfaced to azd
 // -----------------------------------------------------------------------------
+output functionAppName string = functionApp.outputs.name
 output functionAppHostname string = functionApp.outputs.hostname
 output apimGatewayUrl string = apim.outputs.gatewayUrl
 output primaryContentSafetyName string = primaryCs.outputs.name

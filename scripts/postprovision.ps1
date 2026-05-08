@@ -25,6 +25,8 @@ foreach ($line in $values -split "`n") {
 }
 
 $func = $kv['FUNCTION_APP_HOSTNAME']
+$funcName = $kv['FUNCTION_APP_NAME']
+$rg   = $kv['AZURE_RESOURCE_GROUP']
 $apim = $kv['APIM_GATEWAY_URL']
 $pri  = $kv['PRIMARY_CONTENT_SAFETY_NAME']
 $sec  = $kv['SECONDARY_CONTENT_SAFETY_NAME']
@@ -35,8 +37,11 @@ Write-Host "APIM gateway     : $apim"
 Write-Host "Primary CS acct  : $pri"
 Write-Host "Secondary CS acct: $sec"
 Write-Host ''
-Write-Host 'Quick smoke test:' -ForegroundColor Yellow
-Write-Host "  curl `"https://$func/api/health`""
+Write-Host 'The Function App requires `x-functions-key` (FUNCTION auth).' -ForegroundColor Yellow
+Write-Host 'Fetch the default host key with:' -ForegroundColor Yellow
+Write-Host "  az functionapp keys list --name $funcName --resource-group $rg --query functionKeys.default -o tsv"
+Write-Host ''
+Write-Host 'Quick smoke test (test-deployment.ps1 fetches the key automatically):' -ForegroundColor Yellow
 Write-Host '  pwsh ./scripts/test-deployment.ps1'
 Write-Host '  pwsh ./scripts/load-test.ps1 -Count 10'
 Write-Host ''

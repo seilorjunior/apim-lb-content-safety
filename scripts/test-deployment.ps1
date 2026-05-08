@@ -10,6 +10,10 @@
 .PARAMETER FunctionHostname
   Override the Function hostname. Default: read from `azd env get-values`.
 
+.PARAMETER FunctionKey
+  Override the Function host key. Default: read from `az functionapp keys list`.
+  The deployed Function App requires `x-functions-key` (FUNCTION auth level).
+
 .EXAMPLE
   pwsh ./scripts/test-deployment.ps1
   pwsh ./scripts/test-deployment.ps1 -Blocklists
@@ -20,17 +24,47 @@ param (
     [switch] $Blocklists,
 
     [Parameter()]
-    [string] $FunctionHostname
+    [string] $FunctionHostname,
+
+    [Parameter()]
+    [string] $FunctionKey
 )
 
 $ErrorActionPreference = 'Stop'
 
+# Resolve azd env values once: the Function App is FUNCTION-auth so we need both
+# the hostname and a host key (kept out of source via az CLI lookup).
+$envValues = azd env get-values | Out-String
+
+function Get-AzdEnvValue {
+    param ([string] $Name)
+    if ($envValues -match "^${Name}=`"?([^`"`r`n]+?)`"?\s*$") {
+        return $matches[1]
+    }
+    return $null
+}
+
 if (-not $FunctionHostname) {
-    $values = azd env get-values | Out-String
-    if ($values -match 'FUNCTION_APP_HOSTNAME="?([^"\r\n]+?)"?\s*$' -or $values -match 'FUNCTION_APP_HOSTNAME="([^"]+)"') {
-        $FunctionHostname = $matches[1]
-    } else {
+    $FunctionHostname = Get-AzdEnvValue 'FUNCTION_APP_HOSTNAME'
+    if (-not $FunctionHostname) {
         throw "Could not resolve FUNCTION_APP_HOSTNAME from ``azd env get-values``. Pass -FunctionHostname explicitly."
+    }
+}
+
+if (-not $FunctionKey) {
+    $functionAppName  = Get-AzdEnvValue 'FUNCTION_APP_NAME'
+    $resourceGroup    = Get-AzdEnvValue 'AZURE_RESOURCE_GROUP'
+    if (-not $functionAppName -or -not $resourceGroup) {
+        throw "Could not resolve FUNCTION_APP_NAME / AZURE_RESOURCE_GROUP from ``azd env get-values``. Pass -FunctionKey explicitly."
+    }
+    Write-Host "Fetching function key for $functionAppName..." -ForegroundColor DarkGray
+    $keysJson = az functionapp keys list --name $functionAppName --resource-group $resourceGroup 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "az functionapp keys list failed: $keysJson"
+    }
+    $FunctionKey = ($keysJson | Out-String | ConvertFrom-Json).functionKeys.default
+    if (-not $FunctionKey) {
+        throw "default function key was empty. Verify the Function App exists and has a default host key."
     }
 }
 
@@ -45,6 +79,13 @@ function Invoke-Test {
         [hashtable] $Headers = @{},
         [int[]] $ExpectedStatus = @(200, 201, 204)
     )
+
+    # Inject the Function host key on every call. Caller-supplied Headers win
+    # only if they explicitly set x-functions-key.
+    if (-not $Headers.ContainsKey('x-functions-key')) {
+        $Headers = $Headers.Clone()
+        $Headers['x-functions-key'] = $FunctionKey
+    }
 
     Write-Host "[$Name] $Method $Url" -NoNewline
     try {

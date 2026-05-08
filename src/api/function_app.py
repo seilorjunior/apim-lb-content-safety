@@ -1,6 +1,6 @@
 """Azure Function App: thin proxy to APIM gateway.
 
-Routes (anonymous):
+Routes (all require a function key — `?code=<key>` or `x-functions-key`):
   GET  /api/health
   POST /api/analyze-text
   POST /api/analyze-image
@@ -17,6 +17,7 @@ Routes (anonymous):
   GET  /api/blocklists/{name}/items/{itemId}
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -30,10 +31,23 @@ import httpx
 # ----------------------------------------------------------------------------
 
 APIM_GATEWAY_URL = os.environ.get("APIM_GATEWAY_URL", "").rstrip("/")
+APIM_SUBSCRIPTION_KEY = os.environ.get("APIM_SUBSCRIPTION_KEY", "")
 API_VERSION = os.environ.get("CONTENT_SAFETY_API_VERSION", "2024-09-01")
 PREVIEW_API_VERSION = os.environ.get(
     "CONTENT_SAFETY_PREVIEW_API_VERSION", "2024-09-15-preview"
 )
+
+# 10 MiB default; rejects oversized payloads early (also the documented
+# Content Safety image hard limit). Override via env when domain rules differ.
+MAX_REQUEST_BODY_BYTES = int(os.environ.get("MAX_REQUEST_BODY_BYTES", str(10 * 1024 * 1024)))
+
+# Retry transient APIM-side failures. We retry only when the upstream call is
+# safe to repeat: idempotent HTTP methods, OR any method that carries an
+# Idempotency-Key (the APIM policy contract guarantees replay-safety).
+_RETRY_STATUS = frozenset({502, 503, 504})
+_IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_RETRY_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_BASE_SECONDS = 0.25
 
 _FORWARD_REQUEST_HEADERS = frozenset(
     {
@@ -64,7 +78,7 @@ _HTTP_CLIENT = httpx.AsyncClient(  # nosec B113
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
 )
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 
 # ----------------------------------------------------------------------------
@@ -98,12 +112,79 @@ def _trace_headers(req):
     return out
 
 
+def _is_retry_safe(method: str, headers) -> bool:
+    """Retry only when the upstream call is replay-safe.
+
+    True for idempotent HTTP methods, OR any method that carries an
+    Idempotency-Key (the APIM policy contract guarantees replay-safety).
+    """
+    if method.upper() in _IDEMPOTENT_METHODS:
+        return True
+    return any(k.lower() == "idempotency-key" for k in headers)
+
+
+async def _request_with_retry(method, url, params, content, headers, retry_safe):
+    """Execute the upstream call with bounded exponential backoff on transient failures."""
+    last_exc: BaseException | None = None
+    last_resp: httpx.Response | None = None
+
+    attempts = _RETRY_MAX_ATTEMPTS if retry_safe else 1
+    for attempt in range(attempts):
+        try:
+            resp = await _HTTP_CLIENT.request(
+                method=method,
+                url=url,
+                params=params,
+                content=content,
+                headers=headers,
+            )
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as ex:
+            last_exc = ex
+            if attempt + 1 == attempts:
+                raise
+        else:
+            last_resp = resp
+            if resp.status_code not in _RETRY_STATUS or attempt + 1 == attempts:
+                return resp
+            logging.info(
+                "Upstream %s on attempt %d/%d; retrying", resp.status_code, attempt + 1, attempts
+            )
+
+        # Exponential backoff: 0.25, 0.5 (max attempt index = 1 when attempts=3)
+        await asyncio.sleep(_RETRY_BACKOFF_BASE_SECONDS * (2**attempt))
+
+    # Defensive: loop exits via return or raise; last_resp is the most recent
+    # response when retries exhausted on retryable status.
+    if last_resp is not None:
+        return last_resp
+    if last_exc is not None:  # pragma: no cover - belt-and-suspenders
+        raise last_exc
+    raise RuntimeError("retry loop exited without a response")  # pragma: no cover
+
+
 async def _proxy(req, method, path, preview=False):
     """Forward `req` to APIM and translate the response back."""
     if not APIM_GATEWAY_URL:
         return func.HttpResponse(
             body=b'{"code":"ConfigurationError","message":"APIM_GATEWAY_URL is not set"}',
             status_code=500,
+            mimetype="application/json",
+            headers=_trace_headers(req),
+        )
+
+    body = req.get_body() or None
+    if body and len(body) > MAX_REQUEST_BODY_BYTES:
+        return func.HttpResponse(
+            body=json.dumps(
+                {
+                    "code": "PayloadTooLarge",
+                    "message": (
+                        f"Request body of {len(body)} bytes exceeds limit of "
+                        f"{MAX_REQUEST_BODY_BYTES} bytes"
+                    ),
+                }
+            ).encode("utf-8"),
+            status_code=413,
             mimetype="application/json",
             headers=_trace_headers(req),
         )
@@ -117,8 +198,9 @@ async def _proxy(req, method, path, preview=False):
             if k.lower() != "api-version":
                 params[k] = v
 
-    body = req.get_body() or None
     fwd_headers = _filter_headers(dict(req.headers), _FORWARD_REQUEST_HEADERS)
+    if APIM_SUBSCRIPTION_KEY:
+        fwd_headers["ocp-apim-subscription-key"] = APIM_SUBSCRIPTION_KEY
 
     # Log path only (no query string) to avoid leaking caller-supplied secrets.
     logging.info(
@@ -130,12 +212,13 @@ async def _proxy(req, method, path, preview=False):
     )
 
     try:
-        upstream = await _HTTP_CLIENT.request(
+        upstream = await _request_with_retry(
             method=method,
             url=url,
             params=params,
             content=body,
             headers=fwd_headers,
+            retry_safe=_is_retry_safe(method, req.headers),
         )
     except httpx.HTTPError as ex:
         logging.exception("APIM upstream call failed")
