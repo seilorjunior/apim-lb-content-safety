@@ -1,11 +1,11 @@
 name: test
 
 on:
+  # Always run on PRs to main so this check can be required by branch
+  # protection without blocking unrelated PRs (path-filtered required checks
+  # never report status when skipped, so PRs hang waiting for them).
   pull_request:
     branches: [main]
-    paths:
-      - 'src/api/**'
-      - '.github/workflows/test.yml'
   push:
     branches: [main]
     paths:
