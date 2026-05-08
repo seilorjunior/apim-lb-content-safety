@@ -38,7 +38,8 @@ $envValues = azd env get-values | Out-String
 
 function Get-AzdEnvValue {
     param ([string] $Name)
-    if ($envValues -match "^${Name}=`"?([^`"`r`n]+?)`"?\s*$") {
+    # (?m) so ^ and $ anchor on each line, not the whole envValues blob.
+    if ($envValues -match "(?m)^${Name}=`"?([^`"`r`n]+?)`"?\s*$") {
         return $matches[1]
     }
     return $null
@@ -133,9 +134,9 @@ Invoke-Test -Name 'analyze-text' -Method POST `
     -Body $textBody | Out-Null
 
 # ---------------------------------------------------------------------------
-# 3. Analyze Image (1x1 transparent PNG)
+# 3. Analyze Image (64x64 white PNG — Content Safety rejects images <50px)
 # ---------------------------------------------------------------------------
-$pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+$pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAACFSURBVHhe7dAhAQAADITA719681SAk0h2cmOwaQCDTQMYbBrAYNMABpsGMNg0gMGmAQw2DWCwaQCDTQMYbBrAYNMABpsGMNg0gMGmAQw2DWCwaQCDTQMYbBrAYNMABpsGMNg0gMGmAQw2DWCwaQCDTQMYbBrAYNMABpsGMNg0gMGmAQw2D0bQw7Koj1gSAAAAAElFTkSuQmCC'
 $imageBody = @{
     image = @{ content = $pngBase64 }
 } | ConvertTo-Json -Compress

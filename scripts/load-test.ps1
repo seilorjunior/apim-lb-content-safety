@@ -54,7 +54,8 @@ $envValues = azd env get-values | Out-String
 
 function Get-AzdEnvValue {
     param ([string] $Name)
-    if ($envValues -match "^${Name}=`"?([^`"`r`n]+?)`"?\s*$") {
+    # (?m) so ^ and $ anchor on each line, not the whole envValues blob.
+    if ($envValues -match "(?m)^${Name}=`"?([^`"`r`n]+?)`"?\s*$") {
         return $matches[1]
     }
     return $null
