@@ -1,0 +1,53 @@
+# azd
+.azure/
+.env
+*.azd
+
+# Bicep
+*.bicep.bak
+azuredeploy.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.mutmut-cache
+
+# Azure Functions
+local.settings.json
+bin/
+obj/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# MkDocs
+site/
+
+# Logs / scratch
+*.log
+*.tmp
+scratch/
+.local-backup/
+.tmp-pkg/

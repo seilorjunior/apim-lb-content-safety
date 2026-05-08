@@ -1,0 +1,10 @@
+{
+  // https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+  "default": true,
+  "MD013": false,   // line-length
+  "MD024": { "siblings_only": true }, // duplicate headings allowed across sections
+  "MD033": false,   // inline HTML (we use <br> in tables)
+  "MD041": false,   // first line top-level heading (not for ADRs)
+  "MD046": { "style": "fenced" },
+  "MD034": false    // bare URLs (we link in tables)
+}

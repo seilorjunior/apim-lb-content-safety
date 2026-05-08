@@ -1,0 +1,45 @@
+<!--
+  Blocklist pin-read policy.
+  Used for:
+    - GET    /text/blocklists/{blocklistName}
+    - DELETE /text/blocklists/{blocklistName}
+    - GET    /text/blocklists/{blocklistName}/blocklistItems
+    - GET    /text/blocklists/{blocklistName}/blocklistItems/{blocklistItemId}
+
+  Looks up cs-blocklist-{name} -> backend-id (cs-primary or cs-secondary) and
+  routes the call to the pinned backend. Falls back to the round-robin pool
+  on cache miss (the requested blocklist may live on either account, and the
+  caller will get a clean 404 from whichever it lands on if the pin is gone).
+-->
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="blocklistName" value="@((string)context.Request.MatchedParameters["blocklistName"])" />
+    <cache-lookup-value
+      key="@("cs-blocklist-" + (string)context.Variables["blocklistName"])"
+      variable-name="pinnedBackendId"
+      caching-type="prefer-external" />
+    <choose>
+      <when condition="@(context.Variables.ContainsKey("pinnedBackendId") &amp;&amp; !string.IsNullOrEmpty((string)context.Variables["pinnedBackendId"]))">
+        <set-backend-service backend-id="@((string)context.Variables["pinnedBackendId"])" />
+        <trace source="cs-pin" severity="information">
+          <message>@($"Pinned blocklist '{(string)context.Variables["blocklistName"]}' to backend '{(string)context.Variables["pinnedBackendId"]}'")</message>
+        </trace>
+      </when>
+      <otherwise>
+        <trace source="cs-pin" severity="error">
+          <message>@($"Pin cache miss for blocklist '{(string)context.Variables["blocklistName"]}' — falling back to pool. A subsequent 404 is expected if the blocklist lives on the other backend.")</message>
+        </trace>
+      </otherwise>
+    </choose>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

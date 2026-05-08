@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a bug in the apim-lb-content-safety template.
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal `azd` / curl steps to reproduce.
+      placeholder: |
+        1. azd up ...
+        2. curl ...
+        3. observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+
+  - type: input
+    id: region
+    attributes:
+      label: Primary region
+      placeholder: brazilsouth
+
+  - type: input
+    id: secondary-region
+    attributes:
+      label: Secondary region
+      placeholder: eastus2
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / KQL output
+      render: text

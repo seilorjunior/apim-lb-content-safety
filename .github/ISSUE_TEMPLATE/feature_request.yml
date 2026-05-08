@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest an enhancement to the apim-lb-content-safety template.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What pain are you trying to solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

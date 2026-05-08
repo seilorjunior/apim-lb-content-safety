@@ -1,0 +1,47 @@
+name: test
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/api/**'
+      - '.github/workflows/test.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/api/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Function App — pytest + ruff + bandit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: src/api/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Bandit
+        run: bandit -c pyproject.toml -r function_app.py
+
+      - name: Pytest with coverage
+        run: pytest --cov=function_app --cov-report=term-missing --cov-fail-under=80

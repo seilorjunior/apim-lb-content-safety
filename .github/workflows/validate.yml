@@ -1,0 +1,59 @@
+name: validate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bicep:
+    name: Bicep build + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bicep
+        run: az bicep install
+
+      - name: Build infra/main.bicep
+        run: |
+          az bicep build --file infra/main.bicep --stdout > /dev/null
+          echo "infra/main.bicep compiles cleanly"
+
+      - name: Lint Bicep
+        run: az bicep lint --file infra/main.bicep
+
+  policy-xml:
+    name: APIM policy XML well-formedness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate every policy XML
+        run: |
+          set -euo pipefail
+          fail=0
+          for f in infra/modules/policies/*.xml; do
+            echo "== $f =="
+            if ! xmllint --noout "$f"; then
+              fail=1
+            fi
+          done
+          if [ $fail -ne 0 ]; then
+            echo "::error::One or more policy XML files are malformed"
+            exit 1
+          fi
+
+  markdown:
+    name: Markdown lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DavidAnson/markdownlint-cli2-action@v17
+        with:
+          globs: '**/*.md'

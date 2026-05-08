@@ -1,0 +1,60 @@
+<!--
+  Blocklist pin-write policy (without idempotency).
+
+  Used for blocklist mutations where a pin write is needed but no idempotency
+  guard. Currently unused — both upsert and add/remove items use
+  idempotent-mutation.xml. Kept here for future operations that don't need
+  the full Idempotency-Key contract.
+
+  Behaviour:
+    - inbound: lookup any existing pin for the blocklist name; if present,
+      route there. Otherwise leave the pool default in place.
+    - outbound on 2xx: derive backend-id from context.Backend, persist
+      cs-blocklist-{name} -> backend-id with TTL 86400.
+-->
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="blocklistName" value="@((string)context.Request.MatchedParameters["blocklistName"])" />
+    <cache-lookup-value
+      key="@("cs-blocklist-" + (string)context.Variables["blocklistName"])"
+      variable-name="pinnedBackendId"
+      caching-type="prefer-external" />
+    <choose>
+      <when condition="@(context.Variables.ContainsKey("pinnedBackendId") &amp;&amp; !string.IsNullOrEmpty((string)context.Variables["pinnedBackendId"]))">
+        <set-backend-service backend-id="@((string)context.Variables["pinnedBackendId"])" />
+      </when>
+    </choose>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+    <choose>
+      <when condition="@(context.Response.StatusCode &gt;= 200 &amp;&amp; context.Response.StatusCode &lt; 300)">
+        <set-variable name="resolvedBackendId" value="@{
+          var url = context.Request.Url.ToString();
+          if (url.Contains("cs-") &amp;&amp; url.Contains("-pri")) { return "cs-primary"; }
+          if (url.Contains("cs-") &amp;&amp; url.Contains("-sec")) { return "cs-secondary"; }
+          return "";
+        }" />
+        <choose>
+          <when condition="@(!string.IsNullOrEmpty((string)context.Variables["resolvedBackendId"]))">
+            <cache-store-value
+              key="@("cs-blocklist-" + (string)context.Variables["blocklistName"])"
+              value="@((string)context.Variables["resolvedBackendId"])"
+              duration="86400"
+              caching-type="prefer-external" />
+            <trace source="cs-pin" severity="information">
+              <message>@($"Pinned blocklist '{(string)context.Variables["blocklistName"]}' to '{(string)context.Variables["resolvedBackendId"]}'")</message>
+            </trace>
+          </when>
+        </choose>
+      </when>
+    </choose>
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

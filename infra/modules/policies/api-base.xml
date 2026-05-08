@@ -1,0 +1,41 @@
+<!--
+  API-level base policy.
+  - Sets the round-robin pool as the default backend.
+  - Authenticates upstream with APIM's managed identity (Cognitive Services
+    audience).
+  - Retries on 429/5xx three times with exponential-ish backoff.
+  - Echoes a correlation id (W3C traceparent or x-ms-client-request-id) on
+    every response.
+
+  __POOL_BACKEND_ID__ is replaced at deploy time by apim.bicep with the actual
+  pool backend name (currently "cs-pool").
+-->
+<policies>
+  <inbound>
+    <base />
+    <set-backend-service backend-id="__POOL_BACKEND_ID__" />
+    <authentication-managed-identity resource="https://cognitiveservices.azure.com" />
+    <set-header name="x-correlation-id" exists-action="skip">
+      <value>@(context.RequestId.ToString())</value>
+    </set-header>
+  </inbound>
+  <backend>
+    <retry condition="@(context.Response.StatusCode == 429 || (context.Response.StatusCode >= 500 &amp;&amp; context.Response.StatusCode &lt; 600))"
+           count="3"
+           interval="1"
+           max-interval="10"
+           delta="2"
+           first-fast-retry="false">
+      <forward-request buffer-request-body="true" />
+    </retry>
+  </backend>
+  <outbound>
+    <base />
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@(context.RequestId.ToString())</value>
+    </set-header>
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

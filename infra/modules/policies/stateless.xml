@@ -1,0 +1,24 @@
+<!--
+  Stateless policy: pure round-robin via the pool. No pinning, no idempotency.
+  Used for:
+    - POST /text:analyze
+    - POST /image:analyze
+    - POST /text:detectGroundedness
+    - POST /text:detectProtectedMaterial
+    - POST /text:shieldPrompt
+    - GET  /text/blocklists  (list — see README "Notes & limitations")
+-->
+<policies>
+  <inbound>
+    <base />
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

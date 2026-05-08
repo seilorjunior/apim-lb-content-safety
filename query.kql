@@ -1,0 +1,5 @@
+union traces, exceptions
+| where timestamp > ago(15m)
+| project timestamp, severityLevel, message=coalesce(message, outerMessage), category=tostring(customDimensions.Category)
+| order by timestamp desc
+| take 100

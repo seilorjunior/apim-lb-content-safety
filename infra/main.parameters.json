@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "secondaryContentSafetyLocation": {
+      "value": "${AZURE_SECONDARY_CONTENT_SAFETY_LOCATION=eastus2}"
+    },
+    "principalId": {
+      "value": "${AZURE_PRINCIPAL_ID=}"
+    },
+    "useExternalCache": {
+      "value": "${AZURE_USE_EXTERNAL_CACHE=false}"
+    },
+    "redisSku": {
+      "value": "${AZURE_REDIS_SKU=Balanced_B0}"
+    },
+    "redisLocation": {
+      "value": "${AZURE_REDIS_LOCATION=}"
+    },
+    "idempotencyTtlSeconds": {
+      "value": "${AZURE_IDEMPOTENCY_TTL_SECONDS=3600}"
+    },
+    "useProductionGuards": {
+      "value": "${AZURE_USE_PRODUCTION_GUARDS=false}"
+    }
+  }
+}

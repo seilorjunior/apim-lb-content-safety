@@ -1,0 +1,14 @@
+-r requirements.txt
+
+# Test
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-cov==5.0.0
+respx==0.21.1
+
+# Lint / security
+ruff==0.7.4
+bandit[toml]==1.7.10
+
+# Mutation
+mutmut==2.5.1

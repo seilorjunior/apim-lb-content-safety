@@ -1,0 +1,13 @@
+.venv/
+tests/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+*.bak
+*.pyc
+local.settings.json
+local.settings.json.example
+pyproject.toml
+requirements-dev.txt
+*.md
