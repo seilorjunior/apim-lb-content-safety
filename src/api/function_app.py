@@ -98,7 +98,13 @@ def _proxy(req, method, path, preview=False):
     body = req.get_body() or None
     fwd_headers = _filter_headers(dict(req.headers), _FORWARD_REQUEST_HEADERS)
 
-    logging.info("Proxying %s %s -> %s (body=%d bytes)", method, req.url, url, len(body) if body else 0)
+    logging.info(
+        "Proxying %s %s -> %s (body=%d bytes)",
+        method,
+        req.url,
+        url,
+        len(body) if body else 0,
+    )
 
     try:
         upstream = _HTTP_CLIENT.request(
