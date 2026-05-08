@@ -8,7 +8,7 @@ respx==0.21.1
 
 # Lint / security
 ruff==0.7.4
-bandit[toml]==1.7.10
+bandit[toml]==1.9.4
 
 # Mutation
 mutmut==2.5.1
