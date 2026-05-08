@@ -20,6 +20,7 @@ Routes (anonymous):
 import json
 import logging
 import os
+from urllib.parse import parse_qsl, quote, urlsplit
 
 import azure.functions as func
 import httpx
@@ -82,8 +83,19 @@ def _filter_headers(headers, allowed):
 
 
 def _build_url(path, preview=False):
+    """Compose upstream URL + base query params (caller may merge inbound query)."""
     version = PREVIEW_API_VERSION if preview else API_VERSION
-    return f"{APIM_GATEWAY_URL}/contentsafety{path}?api-version={version}"
+    return f"{APIM_GATEWAY_URL}/contentsafety{path}", {"api-version": version}
+
+
+def _trace_headers(req):
+    """Pick correlation/tracing headers from the inbound request for echo on errors."""
+    out = {}
+    for h in ("x-correlation-id", "traceparent", "tracestate"):
+        v = req.headers.get(h)
+        if v:
+            out[h] = v
+    return out
 
 
 async def _proxy(req, method, path, preview=False):
@@ -93,16 +105,26 @@ async def _proxy(req, method, path, preview=False):
             body=b'{"code":"ConfigurationError","message":"APIM_GATEWAY_URL is not set"}',
             status_code=500,
             mimetype="application/json",
+            headers=_trace_headers(req),
         )
 
-    url = _build_url(path, preview=preview)
+    url, params = _build_url(path, preview=preview)
+    # Merge inbound query string so server-side paging (top/skiptoken/...) reaches APIM.
+    # `api-version` is sourced from server config and cannot be overridden by the caller.
+    inbound = urlsplit(req.url).query
+    if inbound:
+        for k, v in parse_qsl(inbound, keep_blank_values=True):
+            if k.lower() != "api-version":
+                params[k] = v
+
     body = req.get_body() or None
     fwd_headers = _filter_headers(dict(req.headers), _FORWARD_REQUEST_HEADERS)
 
+    # Log path only (no query string) to avoid leaking caller-supplied secrets.
     logging.info(
         "Proxying %s %s -> %s (body=%d bytes)",
         method,
-        req.url,
+        urlsplit(req.url).path,
         url,
         len(body) if body else 0,
     )
@@ -111,15 +133,18 @@ async def _proxy(req, method, path, preview=False):
         upstream = await _HTTP_CLIENT.request(
             method=method,
             url=url,
+            params=params,
             content=body,
             headers=fwd_headers,
         )
     except httpx.HTTPError as ex:
         logging.exception("APIM upstream call failed")
+        err_headers = _trace_headers(req)
         return func.HttpResponse(
             body=json.dumps({"code": "UpstreamFailure", "message": str(ex)}).encode("utf-8"),
             status_code=502,
             mimetype="application/json",
+            headers=err_headers,
         )
 
     resp_headers = _filter_headers(upstream.headers, _FORWARD_RESPONSE_HEADERS)
@@ -137,7 +162,7 @@ async def _proxy(req, method, path, preview=False):
 
 
 @app.route(route="health", methods=["GET"])
-def health(req: func.HttpRequest) -> func.HttpResponse:
+async def health(req: func.HttpRequest) -> func.HttpResponse:
     payload = {
         "status": "ok",
         "apim_configured": bool(APIM_GATEWAY_URL),
@@ -193,30 +218,30 @@ async def list_blocklists(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="blocklists/{name}", methods=["PATCH", "GET", "DELETE"])
 async def blocklist_by_name(req: func.HttpRequest) -> func.HttpResponse:
-    name = req.route_params.get("name", "")
+    name = quote(req.route_params.get("name", ""), safe="")
     return await _proxy(req, req.method, f"/text/blocklists/{name}")
 
 
 @app.route(route="blocklists/{name}/items:add", methods=["POST"])
 async def add_blocklist_items(req: func.HttpRequest) -> func.HttpResponse:
-    name = req.route_params.get("name", "")
+    name = quote(req.route_params.get("name", ""), safe="")
     return await _proxy(req, "POST", f"/text/blocklists/{name}:addOrUpdateBlocklistItems")
 
 
 @app.route(route="blocklists/{name}/items:remove", methods=["POST"])
 async def remove_blocklist_items(req: func.HttpRequest) -> func.HttpResponse:
-    name = req.route_params.get("name", "")
+    name = quote(req.route_params.get("name", ""), safe="")
     return await _proxy(req, "POST", f"/text/blocklists/{name}:removeBlocklistItems")
 
 
 @app.route(route="blocklists/{name}/items", methods=["GET"])
 async def list_blocklist_items(req: func.HttpRequest) -> func.HttpResponse:
-    name = req.route_params.get("name", "")
+    name = quote(req.route_params.get("name", ""), safe="")
     return await _proxy(req, "GET", f"/text/blocklists/{name}/blocklistItems")
 
 
 @app.route(route="blocklists/{name}/items/{itemId}", methods=["GET"])
 async def get_blocklist_item(req: func.HttpRequest) -> func.HttpResponse:
-    name = req.route_params.get("name", "")
-    item_id = req.route_params.get("itemId", "")
+    name = quote(req.route_params.get("name", ""), safe="")
+    item_id = quote(req.route_params.get("itemId", ""), safe="")
     return await _proxy(req, "GET", f"/text/blocklists/{name}/blocklistItems/{item_id}")
