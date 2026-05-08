@@ -66,6 +66,7 @@ function Invoke-Test {
         } else {
             Write-Host " -> $($resp.StatusCode) UNEXPECTED" -ForegroundColor Red
             Write-Host $resp.Content
+            throw "[$Name] expected status $($ExpectedStatus -join ',') but got $($resp.StatusCode)"
         }
         return $resp
     } catch {

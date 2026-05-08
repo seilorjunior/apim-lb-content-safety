@@ -58,7 +58,7 @@ _FORWARD_RESPONSE_HEADERS = frozenset(
 
 # Module-level HTTP client - reused across invocations on the same worker.
 # Bandit B113 misses the keyword-form timeout below; explicit suppression.
-_HTTP_CLIENT = httpx.AsyncClient(  # nosec B113 - timeout is configured via httpx.Timeout below
+_HTTP_CLIENT = httpx.AsyncClient(  # nosec B113
     timeout=httpx.Timeout(60.0, connect=10.0),
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
 )

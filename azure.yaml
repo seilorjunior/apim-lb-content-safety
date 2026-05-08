@@ -27,3 +27,16 @@ hooks:
       run: ./scripts/postprovision.ps1
       continueOnError: false
       interactive: false
+  postdeploy:
+    windows:
+      shell: pwsh
+      # Fails loudly if /api/health 404s — primary detector for FC1 Linux
+      # Python worker indexing regressions ("0 functions found (Custom)").
+      run: ./scripts/test-deployment.ps1
+      continueOnError: false
+      interactive: false
+    posix:
+      shell: pwsh
+      run: ./scripts/test-deployment.ps1
+      continueOnError: false
+      interactive: false

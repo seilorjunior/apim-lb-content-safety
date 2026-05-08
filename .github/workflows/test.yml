@@ -41,7 +41,8 @@ jobs:
         run: ruff check .
 
       - name: Bandit
-        run: bandit -c pyproject.toml -r function_app.py
+        # Scan the whole api package; pyproject.toml excludes tests/.venv/build.
+        run: bandit -c pyproject.toml -r .
 
       - name: Pytest with coverage
         run: pytest --cov=function_app --cov-report=term-missing --cov-fail-under=80

@@ -1,0 +1,40 @@
+name: dependency-review
+
+# Blocks PRs that introduce dependencies with known CVEs or non-allowlisted
+# licenses. Runs only on pull requests (the action diffs base..head manifests).
+#
+# Docs: https://github.com/actions/dependency-review-action
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@da24556b548a50705dd671f47852072ea4c105d9  # v4.7.1
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+          # Common permissive OSS licenses + Python ecosystem staples.
+          allow-licenses: >-
+            Apache-2.0,
+            BSD-2-Clause,
+            BSD-3-Clause,
+            ISC,
+            MIT,
+            MPL-2.0,
+            PSF-2.0,
+            Python-2.0,
+            Unlicense,
+            CC0-1.0,
+            0BSD
