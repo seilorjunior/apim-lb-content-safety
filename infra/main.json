@@ -1,0 +1,2354 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.41.2.15936",
+      "templateHash": "2114242973538430191"
+    }
+  },
+  "parameters": {
+    "environmentName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "metadata": {
+        "description": "Name of the azd environment. Used to derive resource names."
+      }
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "Primary region (Function App + APIM + primary Content Safety account + storage + monitoring)."
+      }
+    },
+    "secondaryContentSafetyLocation": {
+      "type": "string",
+      "defaultValue": "eastus2",
+      "metadata": {
+        "description": "Secondary region for the second Content Safety account."
+      }
+    },
+    "principalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Object id of the principal to grant developer roles (Cognitive Services User on each Content Safety account, Key Vault Secrets User on the KV when external cache is on). Leave empty in CI."
+      }
+    },
+    "useExternalCache": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Provision Azure Managed Redis + Key Vault and bind AMR as the APIM external cache. Default false (APIM internal cache)."
+      }
+    },
+    "redisSku": {
+      "type": "string",
+      "defaultValue": "Balanced_B0",
+      "metadata": {
+        "description": "AMR SKU when useExternalCache=true. Default Balanced_B0 (~$80/mo, no SLA, fine for dev)."
+      }
+    },
+    "redisLocation": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Region for Azure Managed Redis. Leave empty (default) to co-locate with the primary location; override (e.g. via AZURE_REDIS_LOCATION) when the primary region has capacity issues for the chosen Redis SKU. Cross-region traffic from APIM to Redis is TCP-only and adds a few ms of latency."
+      }
+    },
+    "idempotencyTtlSeconds": {
+      "type": "int",
+      "defaultValue": 3600,
+      "minValue": 60,
+      "maxValue": 604800,
+      "metadata": {
+        "description": "Idempotency cache TTL in seconds for blocklist mutations. Range 60-604800. Default 3600."
+      }
+    },
+    "useProductionGuards": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Enable irreversible Key Vault purge protection. Leave false in dev."
+      }
+    },
+    "corsAllowedOrigins": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Browser CORS allow-list for the Function App. Default: empty array (server-to-server only). Add specific origins (e.g. [\"https://app.contoso.com\"]) when calling from a browser-hosted SPA."
+      }
+    },
+    "maxRequestBodyBytes": {
+      "type": "int",
+      "defaultValue": "[mul(mul(10, 1024), 1024)]",
+      "minValue": 1024,
+      "maxValue": 104857600,
+      "metadata": {
+        "description": "Maximum request body in bytes accepted by the Function before returning 413. Default 10 MiB matches the Content Safety image hard limit."
+      }
+    }
+  },
+  "variables": {
+    "resourceGroupName": "[format('rg-{0}', parameters('environmentName'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('resourceGroupName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "azd-env-name": "[parameters('environmentName')]"
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "main-resources",
+      "resourceGroup": "[variables('resourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "environmentName": {
+            "value": "[parameters('environmentName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "secondaryContentSafetyLocation": {
+            "value": "[parameters('secondaryContentSafetyLocation')]"
+          },
+          "principalId": {
+            "value": "[parameters('principalId')]"
+          },
+          "useExternalCache": {
+            "value": "[parameters('useExternalCache')]"
+          },
+          "redisSku": {
+            "value": "[parameters('redisSku')]"
+          },
+          "redisLocation": {
+            "value": "[parameters('redisLocation')]"
+          },
+          "idempotencyTtlSeconds": {
+            "value": "[parameters('idempotencyTtlSeconds')]"
+          },
+          "useProductionGuards": {
+            "value": "[parameters('useProductionGuards')]"
+          },
+          "corsAllowedOrigins": {
+            "value": "[parameters('corsAllowedOrigins')]"
+          },
+          "maxRequestBodyBytes": {
+            "value": "[parameters('maxRequestBodyBytes')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "10570987184365679359"
+            }
+          },
+          "parameters": {
+            "environmentName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "secondaryContentSafetyLocation": {
+              "type": "string"
+            },
+            "principalId": {
+              "type": "string"
+            },
+            "useExternalCache": {
+              "type": "bool"
+            },
+            "redisSku": {
+              "type": "string"
+            },
+            "redisLocation": {
+              "type": "string"
+            },
+            "idempotencyTtlSeconds": {
+              "type": "int"
+            },
+            "useProductionGuards": {
+              "type": "bool"
+            },
+            "corsAllowedOrigins": {
+              "type": "array"
+            },
+            "maxRequestBodyBytes": {
+              "type": "int"
+            }
+          },
+          "variables": {
+            "effectiveRedisLocation": "[if(empty(parameters('redisLocation')), parameters('location'), parameters('redisLocation'))]",
+            "token": "[uniqueString(resourceGroup().id, parameters('environmentName'))]",
+            "prefix": "[format('cs{0}', variables('token'))]",
+            "tags": {
+              "azd-env-name": "[parameters('environmentName')]",
+              "workload": "apim-lb-content-safety"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "monitoring",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "workspaceName": {
+                    "value": "[format('log-{0}', variables('prefix'))]"
+                  },
+                  "appInsightsName": {
+                    "value": "[format('appi-{0}', variables('prefix'))]"
+                  },
+                  "tags": {
+                    "value": "[variables('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "3349948883489553572"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string"
+                    },
+                    "workspaceName": {
+                      "type": "string"
+                    },
+                    "appInsightsName": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "object"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.OperationalInsights/workspaces",
+                      "apiVersion": "2023-09-01",
+                      "name": "[parameters('workspaceName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "properties": {
+                        "sku": {
+                          "name": "PerGB2018"
+                        },
+                        "retentionInDays": 30,
+                        "features": {
+                          "enableLogAccessUsingOnlyResourcePermissions": true
+                        }
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Insights/components",
+                      "apiVersion": "2020-02-02",
+                      "name": "[parameters('appInsightsName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "kind": "web",
+                      "properties": {
+                        "Application_Type": "web",
+                        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+                        "IngestionMode": "LogAnalytics",
+                        "publicNetworkAccessForIngestion": "Enabled",
+                        "publicNetworkAccessForQuery": "Enabled"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "workspaceId": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]"
+                    },
+                    "appInsightsId": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.Insights/components', parameters('appInsightsName'))]"
+                    },
+                    "appInsightsName": {
+                      "type": "string",
+                      "value": "[parameters('appInsightsName')]"
+                    },
+                    "appInsightsInstrumentationKey": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), '2020-02-02').InstrumentationKey]"
+                    },
+                    "appInsightsConnectionString": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), '2020-02-02').ConnectionString]"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "network",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "vnetName": {
+                    "value": "[format('vnet-{0}', variables('prefix'))]"
+                  },
+                  "tags": {
+                    "value": "[variables('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "11084647551558267948"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string"
+                    },
+                    "vnetName": {
+                      "type": "string"
+                    },
+                    "functionsSubnetName": {
+                      "type": "string",
+                      "defaultValue": "snet-functions"
+                    },
+                    "privateEndpointsSubnetName": {
+                      "type": "string",
+                      "defaultValue": "snet-pe"
+                    },
+                    "tags": {
+                      "type": "object"
+                    }
+                  },
+                  "variables": {
+                    "vnetAddressPrefix": "10.50.0.0/24",
+                    "functionsSubnetPrefix": "10.50.0.0/27",
+                    "privateEndpointsSubnetPrefix": "10.50.0.32/28"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Network/virtualNetworks",
+                      "apiVersion": "2024-05-01",
+                      "name": "[parameters('vnetName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "properties": {
+                        "addressSpace": {
+                          "addressPrefixes": [
+                            "[variables('vnetAddressPrefix')]"
+                          ]
+                        },
+                        "subnets": [
+                          {
+                            "name": "[parameters('functionsSubnetName')]",
+                            "properties": {
+                              "addressPrefix": "[variables('functionsSubnetPrefix')]",
+                              "delegations": [
+                                {
+                                  "name": "Microsoft.App.environments",
+                                  "properties": {
+                                    "serviceName": "Microsoft.App/environments"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "name": "[parameters('privateEndpointsSubnetName')]",
+                            "properties": {
+                              "addressPrefix": "[variables('privateEndpointsSubnetPrefix')]",
+                              "privateEndpointNetworkPolicies": "Disabled"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Network/privateDnsZones",
+                      "apiVersion": "2024-06-01",
+                      "name": "[format('privatelink.blob.{0}', environment().suffixes.storage)]",
+                      "location": "global",
+                      "tags": "[parameters('tags')]"
+                    },
+                    {
+                      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+                      "apiVersion": "2024-06-01",
+                      "name": "[format('{0}/{1}', format('privatelink.blob.{0}', environment().suffixes.storage), format('{0}-blob-link', parameters('vnetName')))]",
+                      "location": "global",
+                      "properties": {
+                        "registrationEnabled": false,
+                        "virtualNetwork": {
+                          "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.blob.{0}', environment().suffixes.storage))]",
+                        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "vnetId": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+                    },
+                    "vnetName": {
+                      "type": "string",
+                      "value": "[parameters('vnetName')]"
+                    },
+                    "functionsSubnetId": {
+                      "type": "string",
+                      "value": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName')), parameters('functionsSubnetName'))]"
+                    },
+                    "privateEndpointsSubnetId": {
+                      "type": "string",
+                      "value": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName')), parameters('privateEndpointsSubnetName'))]"
+                    },
+                    "blobPrivateDnsZoneId": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.blob.{0}', environment().suffixes.storage))]"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "storage",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "storageAccountName": {
+                    "value": "[format('st{0}', variables('prefix'))]"
+                  },
+                  "privateEndpointSubnetId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.privateEndpointsSubnetId.value]"
+                  },
+                  "blobPrivateDnsZoneId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.blobPrivateDnsZoneId.value]"
+                  },
+                  "tags": {
+                    "value": "[variables('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "2775109567762708872"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string"
+                    },
+                    "storageAccountName": {
+                      "type": "string"
+                    },
+                    "privateEndpointSubnetId": {
+                      "type": "string"
+                    },
+                    "blobPrivateDnsZoneId": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "object"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Storage/storageAccounts",
+                      "apiVersion": "2024-01-01",
+                      "name": "[parameters('storageAccountName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "sku": {
+                        "name": "Standard_LRS"
+                      },
+                      "kind": "StorageV2",
+                      "properties": {
+                        "minimumTlsVersion": "TLS1_2",
+                        "allowBlobPublicAccess": false,
+                        "allowSharedKeyAccess": false,
+                        "defaultToOAuthAuthentication": true,
+                        "publicNetworkAccess": "Disabled",
+                        "supportsHttpsTrafficOnly": true,
+                        "networkAcls": {
+                          "defaultAction": "Deny",
+                          "bypass": "AzureServices"
+                        }
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Storage/storageAccounts/blobServices",
+                      "apiVersion": "2024-01-01",
+                      "name": "[format('{0}/{1}', parameters('storageAccountName'), 'default')]",
+                      "properties": {
+                        "deleteRetentionPolicy": {
+                          "enabled": true,
+                          "days": 7
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+                      "apiVersion": "2024-01-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', 'app-package-deployments')]",
+                      "properties": {
+                        "publicAccess": "None"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageAccountName'), 'default')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Network/privateEndpoints",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('pe-{0}-blob', parameters('storageAccountName'))]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "properties": {
+                        "subnet": {
+                          "id": "[parameters('privateEndpointSubnetId')]"
+                        },
+                        "privateLinkServiceConnections": [
+                          {
+                            "name": "blob",
+                            "properties": {
+                              "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                              "groupIds": [
+                                "blob"
+                              ]
+                            }
+                          }
+                        ],
+                        "customNetworkInterfaceName": "[format('nic-pe-{0}-blob', parameters('storageAccountName'))]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}', format('pe-{0}-blob', parameters('storageAccountName')), 'default')]",
+                      "properties": {
+                        "privateDnsZoneConfigs": [
+                          {
+                            "name": "privatelink-blob-core-windows-net",
+                            "properties": {
+                              "privateDnsZoneId": "[parameters('blobPrivateDnsZoneId')]"
+                            }
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}-blob', parameters('storageAccountName')))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "id": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+                    },
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('storageAccountName')]"
+                    },
+                    "blobEndpoint": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2024-01-01').primaryEndpoints.blob]"
+                    },
+                    "deploymentContainerName": {
+                      "type": "string",
+                      "value": "app-package-deployments"
+                    },
+                    "blobPrivateEndpointId": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}-blob', parameters('storageAccountName')))]"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'network')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "cs-primary",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "accountName": {
+                    "value": "[format('cs-{0}-pri', variables('prefix'))]"
+                  },
+                  "customSubdomainName": {
+                    "value": "[format('{0}-pri', variables('prefix'))]"
+                  },
+                  "tags": {
+                    "value": "[variables('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "9386805884685013245"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string"
+                    },
+                    "accountName": {
+                      "type": "string"
+                    },
+                    "customSubdomainName": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "object"
+                    },
+                    "skuName": {
+                      "type": "string",
+                      "defaultValue": "S0",
+                      "allowedValues": [
+                        "F0",
+                        "S0"
+                      ],
+                      "metadata": {
+                        "description": "F0 = free (limited TPS); S0 = standard. Default S0 to support batch + groundedness."
+                      }
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.CognitiveServices/accounts",
+                      "apiVersion": "2024-10-01",
+                      "name": "[parameters('accountName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "kind": "ContentSafety",
+                      "sku": {
+                        "name": "[parameters('skuName')]"
+                      },
+                      "identity": {
+                        "type": "SystemAssigned"
+                      },
+                      "properties": {
+                        "customSubDomainName": "[parameters('customSubdomainName')]",
+                        "publicNetworkAccess": "Enabled",
+                        "disableLocalAuth": true,
+                        "networkAcls": {
+                          "defaultAction": "Allow"
+                        },
+                        "apiProperties": {}
+                      }
+                    }
+                  ],
+                  "outputs": {
+                    "id": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+                    },
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('accountName')]"
+                    },
+                    "endpoint": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), '2024-10-01').endpoint]"
+                    },
+                    "principalId": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), '2024-10-01', 'full').identity.principalId]"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "cs-secondary",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('secondaryContentSafetyLocation')]"
+                  },
+                  "accountName": {
+                    "value": "[format('cs-{0}-sec', variables('prefix'))]"
+                  },
+                  "customSubdomainName": {
+                    "value": "[format('{0}-sec', variables('prefix'))]"
+                  },
+                  "tags": {
+                    "value": "[variables('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "9386805884685013245"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string"
+                    },
+                    "accountName": {
+                      "type": "string"
+                    },
+                    "customSubdomainName": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "object"
+                    },
+                    "skuName": {
+                      "type": "string",
+                      "defaultValue": "S0",
+                      "allowedValues": [
+                        "F0",
+                        "S0"
+                      ],
+                      "metadata": {
+                        "description": "F0 = free (limited TPS); S0 = standard. Default S0 to support batch + groundedness."
+                      }
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.CognitiveServices/accounts",
+                      "apiVersion": "2024-10-01",
+                      "name": "[parameters('accountName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "kind": "ContentSafety",
+                      "sku": {
+                        "name": "[parameters('skuName')]"
+                      },
+                      "identity": {
+                        "type": "SystemAssigned"
+                      },
+                      "properties": {
+                        "customSubDomainName": "[parameters('customSubdomainName')]",
+                        "publicNetworkAccess": "Enabled",
+                        "disableLocalAuth": true,
+                        "networkAcls": {
+                          "defaultAction": "Allow"
+                        },
+                        "apiProperties": {}
+                      }
+                    }
+                  ],
+                  "outputs": {
+                    "id": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+                    },
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('accountName')]"
+                    },
+                    "endpoint": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), '2024-10-01').endpoint]"
+                    },
+                    "principalId": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), '2024-10-01', 'full').identity.principalId]"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "condition": "[parameters('useExternalCache')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "keyvault",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "keyVaultName": {
+                    "value": "[format('kv-{0}', variables('prefix'))]"
+                  },
+                  "tenantId": {
+                    "value": "[subscription().tenantId]"
+                  },
+                  "enablePurgeProtection": {
+                    "value": "[parameters('useProductionGuards')]"
+                  },
+                  "tags": {
+                    "value": "[variables('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "10528888990888056444"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string"
+                    },
+                    "keyVaultName": {
+                      "type": "string"
+                    },
+                    "tenantId": {
+                      "type": "string"
+                    },
+                    "enablePurgeProtection": {
+                      "type": "bool"
+                    },
+                    "tags": {
+                      "type": "object"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.KeyVault/vaults",
+                      "apiVersion": "2024-04-01-preview",
+                      "name": "[parameters('keyVaultName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "properties": {
+                        "tenantId": "[parameters('tenantId')]",
+                        "sku": {
+                          "family": "A",
+                          "name": "standard"
+                        },
+                        "enableRbacAuthorization": true,
+                        "enableSoftDelete": true,
+                        "softDeleteRetentionInDays": 7,
+                        "enablePurgeProtection": "[if(parameters('enablePurgeProtection'), true(), null())]",
+                        "publicNetworkAccess": "Enabled",
+                        "networkAcls": {
+                          "defaultAction": "Allow",
+                          "bypass": "AzureServices"
+                        }
+                      }
+                    }
+                  ],
+                  "outputs": {
+                    "id": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]"
+                    },
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('keyVaultName')]"
+                    },
+                    "uri": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), '2024-04-01-preview').vaultUri]"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "condition": "[parameters('useExternalCache')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "redis",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[variables('effectiveRedisLocation')]"
+                  },
+                  "clusterName": {
+                    "value": "[format('amr-{0}', variables('prefix'))]"
+                  },
+                  "skuName": {
+                    "value": "[parameters('redisSku')]"
+                  },
+                  "keyVaultName": "[if(parameters('useExternalCache'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.name.value), createObject('value', ''))]",
+                  "secretName": {
+                    "value": "redis-connection-string"
+                  },
+                  "tags": {
+                    "value": "[variables('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "2997015777871468531"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string"
+                    },
+                    "clusterName": {
+                      "type": "string"
+                    },
+                    "skuName": {
+                      "type": "string"
+                    },
+                    "keyVaultName": {
+                      "type": "string"
+                    },
+                    "secretName": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "object"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Cache/redisEnterprise",
+                      "apiVersion": "2024-09-01-preview",
+                      "name": "[parameters('clusterName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "sku": {
+                        "name": "[parameters('skuName')]"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Cache/redisEnterprise/databases",
+                      "apiVersion": "2024-09-01-preview",
+                      "name": "[format('{0}/{1}', parameters('clusterName'), 'default')]",
+                      "properties": {
+                        "clientProtocol": "Encrypted",
+                        "port": 10000,
+                        "clusteringPolicy": "EnterpriseCluster",
+                        "evictionPolicy": "NoEviction",
+                        "persistence": {
+                          "aofEnabled": false,
+                          "rdbEnabled": false
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Cache/redisEnterprise', parameters('clusterName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.KeyVault/vaults/secrets",
+                      "apiVersion": "2024-04-01-preview",
+                      "name": "[format('{0}/{1}', parameters('keyVaultName'), parameters('secretName'))]",
+                      "properties": {
+                        "value": "[format('{0}:10000,password={1},ssl=True,abortConnect=False', reference(resourceId('Microsoft.Cache/redisEnterprise', parameters('clusterName')), '2024-09-01-preview').hostName, listKeys(resourceId('Microsoft.Cache/redisEnterprise/databases', parameters('clusterName'), 'default'), '2024-09-01-preview').primaryKey)]",
+                        "contentType": "text/plain"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Cache/redisEnterprise', parameters('clusterName'))]",
+                        "[resourceId('Microsoft.Cache/redisEnterprise/databases', parameters('clusterName'), 'default')]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "clusterId": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.Cache/redisEnterprise', parameters('clusterName'))]"
+                    },
+                    "hostName": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Cache/redisEnterprise', parameters('clusterName')), '2024-09-01-preview').hostName]"
+                    },
+                    "connectionStringSecretUri": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.KeyVault/vaults/secrets', parameters('keyVaultName'), parameters('secretName')), '2024-04-01-preview').secretUri]"
+                    },
+                    "connectionString": {
+                      "type": "string",
+                      "value": "[format('{0}:10000,password={1},ssl=True,abortConnect=False', reference(resourceId('Microsoft.Cache/redisEnterprise', parameters('clusterName')), '2024-09-01-preview').hostName, listKeys(resourceId('Microsoft.Cache/redisEnterprise/databases', parameters('clusterName'), 'default'), '2024-09-01-preview').primaryKey)]"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'keyvault')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "apim",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "apimName": {
+                    "value": "[format('apim-{0}', variables('prefix'))]"
+                  },
+                  "publisherEmail": {
+                    "value": "[format('admin@{0}.local', parameters('environmentName'))]"
+                  },
+                  "publisherName": {
+                    "value": "[parameters('environmentName')]"
+                  },
+                  "primaryContentSafetyEndpoint": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cs-primary'), '2025-04-01').outputs.endpoint.value]"
+                  },
+                  "primaryContentSafetyName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cs-primary'), '2025-04-01').outputs.name.value]"
+                  },
+                  "secondaryContentSafetyEndpoint": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cs-secondary'), '2025-04-01').outputs.endpoint.value]"
+                  },
+                  "secondaryContentSafetyName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cs-secondary'), '2025-04-01').outputs.name.value]"
+                  },
+                  "appInsightsId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsId.value]"
+                  },
+                  "appInsightsKey": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsInstrumentationKey.value]"
+                  },
+                  "useExternalCache": {
+                    "value": "[parameters('useExternalCache')]"
+                  },
+                  "redisConnectionStringSecretUri": "[if(parameters('useExternalCache'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'redis'), '2025-04-01').outputs.connectionStringSecretUri.value), createObject('value', ''))]",
+                  "redisConnectionString": "[if(parameters('useExternalCache'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'redis'), '2025-04-01').outputs.connectionString.value), createObject('value', ''))]",
+                  "idempotencyTtlSeconds": {
+                    "value": "[parameters('idempotencyTtlSeconds')]"
+                  },
+                  "tags": {
+                    "value": "[variables('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "12908304207149199136"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string"
+                    },
+                    "apimName": {
+                      "type": "string"
+                    },
+                    "publisherEmail": {
+                      "type": "string"
+                    },
+                    "publisherName": {
+                      "type": "string"
+                    },
+                    "primaryContentSafetyEndpoint": {
+                      "type": "string"
+                    },
+                    "primaryContentSafetyName": {
+                      "type": "string"
+                    },
+                    "secondaryContentSafetyEndpoint": {
+                      "type": "string"
+                    },
+                    "secondaryContentSafetyName": {
+                      "type": "string"
+                    },
+                    "appInsightsId": {
+                      "type": "string"
+                    },
+                    "appInsightsKey": {
+                      "type": "securestring"
+                    },
+                    "useExternalCache": {
+                      "type": "bool"
+                    },
+                    "redisConnectionStringSecretUri": {
+                      "type": "string"
+                    },
+                    "redisConnectionString": {
+                      "type": "securestring"
+                    },
+                    "idempotencyTtlSeconds": {
+                      "type": "int"
+                    },
+                    "tags": {
+                      "type": "object"
+                    }
+                  },
+                  "variables": {
+                    "$fxv#0": "<!--\r\n  API-level base policy.\r\n  - Sets the round-robin pool as the default backend.\r\n  - Authenticates upstream with APIM's managed identity (Cognitive Services\r\n    audience).\r\n  - Retries on 429/5xx three times with exponential-ish backoff.\r\n  - Echoes a correlation id (W3C traceparent or x-ms-client-request-id) on\r\n    every response.\r\n\r\n  __POOL_BACKEND_ID__ is replaced at deploy time by apim.bicep with the actual\r\n  pool backend name (currently \"cs-pool\").\r\n-->\r\n<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service backend-id=\"__POOL_BACKEND_ID__\" />\r\n    <authentication-managed-identity resource=\"https://cognitiveservices.azure.com\" />\r\n    <set-header name=\"x-correlation-id\" exists-action=\"skip\">\r\n      <value>@(context.RequestId.ToString())</value>\r\n    </set-header>\r\n  </inbound>\r\n  <backend>\r\n    <retry condition=\"@(context.Response.StatusCode == 429 || (context.Response.StatusCode >= 500 &amp;&amp; context.Response.StatusCode &lt; 600))\"\r\n           count=\"3\"\r\n           interval=\"1\"\r\n           max-interval=\"10\"\r\n           delta=\"2\"\r\n           first-fast-retry=\"false\">\r\n      <forward-request buffer-request-body=\"true\" />\r\n    </retry>\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n    <set-header name=\"x-correlation-id\" exists-action=\"override\">\r\n      <value>@(context.RequestId.ToString())</value>\r\n    </set-header>\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>\r\n",
+                    "primaryBackendUrl": "[format('{0}{1}contentsafety', parameters('primaryContentSafetyEndpoint'), if(endsWith(parameters('primaryContentSafetyEndpoint'), '/'), '', '/'))]",
+                    "secondaryBackendUrl": "[format('{0}{1}contentsafety', parameters('secondaryContentSafetyEndpoint'), if(endsWith(parameters('secondaryContentSafetyEndpoint'), '/'), '', '/'))]",
+                    "statelessPolicy": "<!--\r\n  Stateless policy: pure round-robin via the pool. No pinning, no idempotency.\r\n  Used for:\r\n    - POST /text:analyze\r\n    - POST /image:analyze\r\n    - POST /text:detectGroundedness\r\n    - POST /text:detectProtectedMaterial\r\n    - POST /text:shieldPrompt\r\n    - GET  /text/blocklists  (list — see README \"Notes & limitations\")\r\n-->\r\n<policies>\r\n  <inbound>\r\n    <base />\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>\r\n",
+                    "pinReadPolicy": "<!--\r\n  Blocklist pin-read policy.\r\n  Used for:\r\n    - GET    /text/blocklists/{blocklistName}\r\n    - DELETE /text/blocklists/{blocklistName}\r\n    - GET    /text/blocklists/{blocklistName}/blocklistItems\r\n    - GET    /text/blocklists/{blocklistName}/blocklistItems/{blocklistItemId}\r\n\r\n  Looks up cs-blocklist-{name} -> backend-id (cs-primary or cs-secondary) and\r\n  routes the call to the pinned backend. Falls back to the round-robin pool\r\n  on cache miss (the requested blocklist may live on either account, and the\r\n  caller will get a clean 404 from whichever it lands on if the pin is gone).\r\n-->\r\n<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-variable name=\"blocklistName\" value=\"@((string)context.Request.MatchedParameters[\"blocklistName\"])\" />\r\n    <cache-lookup-value\r\n      key=\"@(\"cs-blocklist-\" + (string)context.Variables[\"blocklistName\"])\"\r\n      variable-name=\"pinnedBackendId\"\r\n      caching-type=\"prefer-external\" />\r\n    <choose>\r\n      <when condition=\"@(context.Variables.ContainsKey(\"pinnedBackendId\") &amp;&amp; !string.IsNullOrEmpty((string)context.Variables[\"pinnedBackendId\"]))\">\r\n        <set-backend-service backend-id=\"@((string)context.Variables[\"pinnedBackendId\"])\" />\r\n        <trace source=\"cs-pin\" severity=\"information\">\r\n          <message>@($\"Pinned blocklist '{(string)context.Variables[\"blocklistName\"]}' to backend '{(string)context.Variables[\"pinnedBackendId\"]}'\")</message>\r\n        </trace>\r\n      </when>\r\n      <otherwise>\r\n        <trace source=\"cs-pin\" severity=\"error\">\r\n          <message>@($\"Pin cache miss for blocklist '{(string)context.Variables[\"blocklistName\"]}' — falling back to pool. A subsequent 404 is expected if the blocklist lives on the other backend.\")</message>\r\n        </trace>\r\n      </otherwise>\r\n    </choose>\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>\r\n",
+                    "pinWriteIdempotentPolicy": "<!--\r\n  Blocklist mutation policy with idempotency guard + pin write.\r\n\r\n  Used for:\r\n    - PATCH /text/blocklists/{blocklistName}\r\n    - POST  /text/blocklists/{blocklistName}:addOrUpdateBlocklistItems\r\n    - POST  /text/blocklists/{blocklistName}:removeBlocklistItems\r\n\r\n  Idempotency contract (matches the Stripe / IETF Idempotency-Key draft):\r\n    1. If Idempotency-Key is absent       -> proceed normally (no caching).\r\n    2. Key shape: 1-128 chars, ^[A-Za-z0-9._-]+$. Otherwise 400.\r\n    3. SHA-256(request body) is the fingerprint.\r\n    4. If cs-idem-hash-{key} hits and matches  -> return cached body + Location\r\n       with X-Idempotent-Replay: true.\r\n    5. If hash hits but mismatches             -> 422 IdempotencyKeyConflict.\r\n    6. If a sentinel cs-idem-lock-{key}=InProgress exists -> 409 +\r\n       Retry-After: 5.\r\n    7. Else write the InProgress sentinel (TTL 300 s) and forward upstream.\r\n       On 2xx: store body, hash, location, then set the cs-blocklist-{name}\r\n       pin. The hash is written LAST so a hash hit guarantees body presence.\r\n\r\n  TTL for cs-idem-* entries comes from named value {{idempotency-ttl-seconds}};\r\n  APIM substitutes the literal int at policy parse time.\r\n-->\r\n<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-variable name=\"blocklistName\" value=\"@((string)context.Request.MatchedParameters[\"blocklistName\"])\" />\r\n    <set-variable name=\"idemKey\" value=\"@(context.Request.Headers.GetValueOrDefault(\"Idempotency-Key\",\"\"))\" />\r\n    <choose>\r\n      <when condition=\"@(!string.IsNullOrEmpty((string)context.Variables[\"idemKey\"]))\">\r\n        <!-- Validate key shape -->\r\n        <choose>\r\n          <when condition=\"@{\r\n            var k = (string)context.Variables[\"idemKey\"];\r\n            if (k.Length &lt; 1 || k.Length &gt; 128) { return true; }\r\n            foreach (var c in k) {\r\n              if (!(char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-')) { return true; }\r\n            }\r\n            return false;\r\n          }\">\r\n            <return-response>\r\n              <set-status code=\"400\" reason=\"InvalidIdempotencyKey\" />\r\n              <set-header name=\"Content-Type\" exists-action=\"override\">\r\n                <value>application/json</value>\r\n              </set-header>\r\n              <set-body>{\"code\":\"InvalidIdempotencyKey\",\"message\":\"Idempotency-Key must match ^[A-Za-z0-9._-]{1,128}$\"}</set-body>\r\n            </return-response>\r\n          </when>\r\n        </choose>\r\n\r\n        <!-- Compute SHA-256 of body for fingerprinting -->\r\n        <set-variable name=\"bodyBytes\" value=\"@(context.Request.Body.As&lt;byte[]&gt;(preserveContent: true))\" />\r\n        <set-variable name=\"bodyHash\" value=\"@{\r\n          var bytes = (byte[])context.Variables[\"bodyBytes\"];\r\n          var sha = System.Security.Cryptography.SHA256.Create();\r\n          var h = sha.ComputeHash(bytes);\r\n          var sb = new System.Text.StringBuilder();\r\n          foreach (var b in h) { sb.Append(b.ToString(\"x2\")); }\r\n          return sb.ToString();\r\n        }\" />\r\n\r\n        <!-- Look up existing hash -->\r\n        <cache-lookup-value\r\n          key=\"@(\"cs-idem-hash-\" + (string)context.Variables[\"idemKey\"])\"\r\n          variable-name=\"cachedHash\"\r\n          caching-type=\"prefer-external\" />\r\n        <choose>\r\n          <when condition=\"@(context.Variables.ContainsKey(\"cachedHash\") &amp;&amp; !string.IsNullOrEmpty((string)context.Variables[\"cachedHash\"]))\">\r\n            <choose>\r\n              <when condition=\"@((string)context.Variables[\"cachedHash\"] == (string)context.Variables[\"bodyHash\"])\">\r\n                <!-- Replay -->\r\n                <cache-lookup-value\r\n                  key=\"@(\"cs-idem-\" + (string)context.Variables[\"idemKey\"])\"\r\n                  variable-name=\"cachedBody\"\r\n                  caching-type=\"prefer-external\" />\r\n                <cache-lookup-value\r\n                  key=\"@(\"cs-idem-loc-\" + (string)context.Variables[\"idemKey\"])\"\r\n                  variable-name=\"cachedLocation\"\r\n                  caching-type=\"prefer-external\" />\r\n                <return-response>\r\n                  <set-status code=\"201\" reason=\"Created (replayed)\" />\r\n                  <set-header name=\"Content-Type\" exists-action=\"override\">\r\n                    <value>application/json</value>\r\n                  </set-header>\r\n                  <set-header name=\"X-Idempotent-Replay\" exists-action=\"override\">\r\n                    <value>true</value>\r\n                  </set-header>\r\n                  <set-header name=\"Location\" exists-action=\"override\">\r\n                    <value>@((string)context.Variables.GetValueOrDefault(\"cachedLocation\",\"\"))</value>\r\n                  </set-header>\r\n                  <set-body>@((string)context.Variables.GetValueOrDefault(\"cachedBody\",\"\"))</set-body>\r\n                </return-response>\r\n              </when>\r\n              <otherwise>\r\n                <return-response>\r\n                  <set-status code=\"422\" reason=\"IdempotencyKeyConflict\" />\r\n                  <set-header name=\"Content-Type\" exists-action=\"override\">\r\n                    <value>application/json</value>\r\n                  </set-header>\r\n                  <set-body>{\"code\":\"IdempotencyKeyConflict\",\"message\":\"Same Idempotency-Key seen with a different request body\"}</set-body>\r\n                </return-response>\r\n              </otherwise>\r\n            </choose>\r\n          </when>\r\n        </choose>\r\n\r\n        <!-- Check in-flight sentinel -->\r\n        <cache-lookup-value\r\n          key=\"@(\"cs-idem-lock-\" + (string)context.Variables[\"idemKey\"])\"\r\n          variable-name=\"lockState\"\r\n          caching-type=\"prefer-external\" />\r\n        <choose>\r\n          <when condition=\"@(context.Variables.ContainsKey(\"lockState\") &amp;&amp; (string)context.Variables[\"lockState\"] == \"InProgress\")\">\r\n            <return-response>\r\n              <set-status code=\"409\" reason=\"IdempotencyInFlight\" />\r\n              <set-header name=\"Retry-After\" exists-action=\"override\">\r\n                <value>5</value>\r\n              </set-header>\r\n              <set-header name=\"Content-Type\" exists-action=\"override\">\r\n                <value>application/json</value>\r\n              </set-header>\r\n              <set-body>{\"code\":\"IdempotencyInFlight\",\"message\":\"A request with the same Idempotency-Key is in flight; retry per Retry-After.\"}</set-body>\r\n            </return-response>\r\n          </when>\r\n        </choose>\r\n\r\n        <!-- Write the in-flight sentinel (best-effort, no atomic CAS) -->\r\n        <cache-store-value\r\n          key=\"@(\"cs-idem-lock-\" + (string)context.Variables[\"idemKey\"])\"\r\n          value=\"InProgress\"\r\n          duration=\"300\"\r\n          caching-type=\"prefer-external\" />\r\n      </when>\r\n    </choose>\r\n\r\n    <!-- Pin lookup (existing pin overrides pool) -->\r\n    <cache-lookup-value\r\n      key=\"@(\"cs-blocklist-\" + (string)context.Variables[\"blocklistName\"])\"\r\n      variable-name=\"pinnedBackendId\"\r\n      caching-type=\"prefer-external\" />\r\n    <choose>\r\n      <when condition=\"@(context.Variables.ContainsKey(\"pinnedBackendId\") &amp;&amp; !string.IsNullOrEmpty((string)context.Variables[\"pinnedBackendId\"]))\">\r\n        <set-backend-service backend-id=\"@((string)context.Variables[\"pinnedBackendId\"])\" />\r\n      </when>\r\n    </choose>\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n    <choose>\r\n      <when condition=\"@(context.Response.StatusCode &gt;= 200 &amp;&amp; context.Response.StatusCode &lt; 300)\">\r\n        <!-- Resolve which backend served the response -->\r\n        <set-variable name=\"resolvedBackendId\" value=\"@{\r\n          var url = context.Request.Url.ToString();\r\n          if (url.Contains(\"-pri.cognitiveservices\")) { return \"cs-primary\"; }\r\n          if (url.Contains(\"-sec.cognitiveservices\")) { return \"cs-secondary\"; }\r\n          return \"\";\r\n        }\" />\r\n        <choose>\r\n          <when condition=\"@(!string.IsNullOrEmpty((string)context.Variables[\"resolvedBackendId\"]))\">\r\n            <cache-store-value\r\n              key=\"@(\"cs-blocklist-\" + (string)context.Variables[\"blocklistName\"])\"\r\n              value=\"@((string)context.Variables[\"resolvedBackendId\"])\"\r\n              duration=\"86400\"\r\n              caching-type=\"prefer-external\" />\r\n          </when>\r\n        </choose>\r\n\r\n        <!-- Idempotency post-write -->\r\n        <choose>\r\n          <when condition=\"@(!string.IsNullOrEmpty((string)context.Variables.GetValueOrDefault(\"idemKey\",\"\")))\">\r\n            <set-variable name=\"responseBody\" value=\"@(context.Response.Body.As&lt;string&gt;(preserveContent: true))\" />\r\n            <set-variable name=\"locationHdr\" value=\"@(context.Response.Headers.GetValueOrDefault(\"Location\",\"\"))\" />\r\n            <cache-store-value\r\n              key=\"@(\"cs-idem-\" + (string)context.Variables[\"idemKey\"])\"\r\n              value=\"@((string)context.Variables[\"responseBody\"])\"\r\n              duration=\"{{idempotency-ttl-seconds}}\"\r\n              caching-type=\"prefer-external\" />\r\n            <cache-store-value\r\n              key=\"@(\"cs-idem-loc-\" + (string)context.Variables[\"idemKey\"])\"\r\n              value=\"@((string)context.Variables[\"locationHdr\"])\"\r\n              duration=\"{{idempotency-ttl-seconds}}\"\r\n              caching-type=\"prefer-external\" />\r\n            <!-- Hash MUST be stored LAST so a hash hit guarantees body presence -->\r\n            <cache-store-value\r\n              key=\"@(\"cs-idem-hash-\" + (string)context.Variables[\"idemKey\"])\"\r\n              value=\"@((string)context.Variables.GetValueOrDefault(\"bodyHash\",\"\"))\"\r\n              duration=\"{{idempotency-ttl-seconds}}\"\r\n              caching-type=\"prefer-external\" />\r\n          </when>\r\n        </choose>\r\n      </when>\r\n    </choose>\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>\r\n"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.ApiManagement/service",
+                      "apiVersion": "2024-05-01",
+                      "name": "[parameters('apimName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "sku": {
+                        "name": "BasicV2",
+                        "capacity": 1
+                      },
+                      "identity": {
+                        "type": "SystemAssigned"
+                      },
+                      "properties": {
+                        "publisherEmail": "[parameters('publisherEmail')]",
+                        "publisherName": "[parameters('publisherName')]",
+                        "publicNetworkAccess": "Enabled"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/loggers",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}', parameters('apimName'), 'appinsights')]",
+                      "properties": {
+                        "loggerType": "applicationInsights",
+                        "description": "Application Insights logger for content-safety API",
+                        "resourceId": "[parameters('appInsightsId')]",
+                        "credentials": {
+                          "instrumentationKey": "[parameters('appInsightsKey')]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/diagnostics",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}', parameters('apimName'), 'applicationinsights')]",
+                      "properties": {
+                        "alwaysLog": "allErrors",
+                        "httpCorrelationProtocol": "W3C",
+                        "sampling": {
+                          "samplingType": "fixed",
+                          "percentage": 100
+                        },
+                        "loggerId": "[resourceId('Microsoft.ApiManagement/service/loggers', parameters('apimName'), 'appinsights')]",
+                        "verbosity": "information"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]",
+                        "[resourceId('Microsoft.ApiManagement/service/loggers', parameters('apimName'), 'appinsights')]"
+                      ]
+                    },
+                    {
+                      "condition": "[parameters('useExternalCache')]",
+                      "type": "Microsoft.ApiManagement/service/caches",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}', parameters('apimName'), 'default')]",
+                      "properties": {
+                        "description": "AMR external cache (blocklist pinning + idempotency)",
+                        "connectionString": "[parameters('redisConnectionString')]",
+                        "useFromLocation": "[parameters('location')]",
+                        "resourceId": "[parameters('redisConnectionStringSecretUri')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/namedValues",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}', parameters('apimName'), 'idempotency-ttl-seconds')]",
+                      "properties": {
+                        "displayName": "idempotency-ttl-seconds",
+                        "value": "[string(parameters('idempotencyTtlSeconds'))]",
+                        "secret": false
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/backends",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}', parameters('apimName'), 'cs-primary')]",
+                      "properties": {
+                        "url": "[variables('primaryBackendUrl')]",
+                        "protocol": "http",
+                        "description": "[format('Content Safety primary ({0})', parameters('primaryContentSafetyName'))]",
+                        "circuitBreaker": {
+                          "rules": [
+                            {
+                              "name": "cb-rule",
+                              "failureCondition": {
+                                "count": 5,
+                                "interval": "PT1M",
+                                "statusCodeRanges": [
+                                  {
+                                    "min": 429,
+                                    "max": 429
+                                  },
+                                  {
+                                    "min": 500,
+                                    "max": 599
+                                  }
+                                ]
+                              },
+                              "tripDuration": "PT30S",
+                              "acceptRetryAfter": true
+                            }
+                          ]
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/backends",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}', parameters('apimName'), 'cs-secondary')]",
+                      "properties": {
+                        "url": "[variables('secondaryBackendUrl')]",
+                        "protocol": "http",
+                        "description": "[format('Content Safety secondary ({0})', parameters('secondaryContentSafetyName'))]",
+                        "circuitBreaker": {
+                          "rules": [
+                            {
+                              "name": "cb-rule",
+                              "failureCondition": {
+                                "count": 5,
+                                "interval": "PT1M",
+                                "statusCodeRanges": [
+                                  {
+                                    "min": 429,
+                                    "max": 429
+                                  },
+                                  {
+                                    "min": 500,
+                                    "max": 599
+                                  }
+                                ]
+                              },
+                              "tripDuration": "PT30S",
+                              "acceptRetryAfter": true
+                            }
+                          ]
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/backends",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}', parameters('apimName'), 'cs-pool')]",
+                      "properties": {
+                        "description": "Round-robin pool over both Content Safety accounts",
+                        "type": "Pool",
+                        "pool": {
+                          "services": [
+                            {
+                              "id": "[resourceId('Microsoft.ApiManagement/service/backends', parameters('apimName'), 'cs-primary')]",
+                              "priority": 1,
+                              "weight": 1
+                            },
+                            {
+                              "id": "[resourceId('Microsoft.ApiManagement/service/backends', parameters('apimName'), 'cs-secondary')]",
+                              "priority": 1,
+                              "weight": 1
+                            }
+                          ]
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]",
+                        "[resourceId('Microsoft.ApiManagement/service/backends', parameters('apimName'), 'cs-primary')]",
+                        "[resourceId('Microsoft.ApiManagement/service/backends', parameters('apimName'), 'cs-secondary')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}', parameters('apimName'), 'content-safety')]",
+                      "properties": {
+                        "displayName": "Content Safety",
+                        "description": "Load-balanced facade over two Azure AI Content Safety accounts",
+                        "path": "contentsafety",
+                        "protocols": [
+                          "https"
+                        ],
+                        "subscriptionRequired": true,
+                        "apiType": "http"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/subscriptions",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}', parameters('apimName'), 'function-app')]",
+                      "properties": {
+                        "displayName": "Content Safety - Function App",
+                        "scope": "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]",
+                        "state": "active",
+                        "allowTracing": false
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]",
+                        "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[replace(variables('$fxv#0'), '__POOL_BACKEND_ID__', 'cs-pool')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]",
+                        "[resourceId('Microsoft.ApiManagement/service/backends', parameters('apimName'), 'cs-pool')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'analyze-text')]",
+                      "properties": {
+                        "displayName": "Analyze Text",
+                        "method": "POST",
+                        "urlTemplate": "/text:analyze"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'analyze-image')]",
+                      "properties": {
+                        "displayName": "Analyze Image",
+                        "method": "POST",
+                        "urlTemplate": "/image:analyze"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'detect-groundedness')]",
+                      "properties": {
+                        "displayName": "Detect Groundedness",
+                        "method": "POST",
+                        "urlTemplate": "/text:detectGroundedness"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'detect-protected-material')]",
+                      "properties": {
+                        "displayName": "Detect Protected Material",
+                        "method": "POST",
+                        "urlTemplate": "/text:detectProtectedMaterial"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'shield-prompt')]",
+                      "properties": {
+                        "displayName": "Shield Prompt (Prompt Shields)",
+                        "method": "POST",
+                        "urlTemplate": "/text:shieldPrompt"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'list-blocklists')]",
+                      "properties": {
+                        "displayName": "List Blocklists",
+                        "method": "GET",
+                        "urlTemplate": "/text/blocklists"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'upsert-blocklist')]",
+                      "properties": {
+                        "displayName": "Create or Update Blocklist",
+                        "method": "PATCH",
+                        "urlTemplate": "/text/blocklists/{blocklistName}",
+                        "templateParameters": [
+                          {
+                            "name": "blocklistName",
+                            "type": "string",
+                            "required": true
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'add-blocklist-items')]",
+                      "properties": {
+                        "displayName": "Add or Update Blocklist Items",
+                        "method": "POST",
+                        "urlTemplate": "/text/blocklists/{blocklistName}:addOrUpdateBlocklistItems",
+                        "templateParameters": [
+                          {
+                            "name": "blocklistName",
+                            "type": "string",
+                            "required": true
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'remove-blocklist-items')]",
+                      "properties": {
+                        "displayName": "Remove Blocklist Items",
+                        "method": "POST",
+                        "urlTemplate": "/text/blocklists/{blocklistName}:removeBlocklistItems",
+                        "templateParameters": [
+                          {
+                            "name": "blocklistName",
+                            "type": "string",
+                            "required": true
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'get-blocklist')]",
+                      "properties": {
+                        "displayName": "Get Blocklist",
+                        "method": "GET",
+                        "urlTemplate": "/text/blocklists/{blocklistName}",
+                        "templateParameters": [
+                          {
+                            "name": "blocklistName",
+                            "type": "string",
+                            "required": true
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'delete-blocklist')]",
+                      "properties": {
+                        "displayName": "Delete Blocklist",
+                        "method": "DELETE",
+                        "urlTemplate": "/text/blocklists/{blocklistName}",
+                        "templateParameters": [
+                          {
+                            "name": "blocklistName",
+                            "type": "string",
+                            "required": true
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'list-blocklist-items')]",
+                      "properties": {
+                        "displayName": "List Blocklist Items",
+                        "method": "GET",
+                        "urlTemplate": "/text/blocklists/{blocklistName}/blocklistItems",
+                        "templateParameters": [
+                          {
+                            "name": "blocklistName",
+                            "type": "string",
+                            "required": true
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'get-blocklist-item')]",
+                      "properties": {
+                        "displayName": "Get Blocklist Item",
+                        "method": "GET",
+                        "urlTemplate": "/text/blocklists/{blocklistName}/blocklistItems/{blocklistItemId}",
+                        "templateParameters": [
+                          {
+                            "name": "blocklistName",
+                            "type": "string",
+                            "required": true
+                          },
+                          {
+                            "name": "blocklistItemId",
+                            "type": "string",
+                            "required": true
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'analyze-text', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('statelessPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'analyze-text')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'analyze-image', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('statelessPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'analyze-image')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'detect-groundedness', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('statelessPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'detect-groundedness')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'detect-protected-material', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('statelessPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'detect-protected-material')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'shield-prompt', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('statelessPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'shield-prompt')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'list-blocklists', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('statelessPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'list-blocklists')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'upsert-blocklist', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('pinWriteIdempotentPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/namedValues', parameters('apimName'), 'idempotency-ttl-seconds')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'upsert-blocklist')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'add-blocklist-items', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('pinWriteIdempotentPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/namedValues', parameters('apimName'), 'idempotency-ttl-seconds')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'add-blocklist-items')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'remove-blocklist-items', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('pinWriteIdempotentPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/namedValues', parameters('apimName'), 'idempotency-ttl-seconds')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'remove-blocklist-items')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'get-blocklist', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('pinReadPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'get-blocklist')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'delete-blocklist', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('pinReadPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'delete-blocklist')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'list-blocklist-items', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('pinReadPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'list-blocklist-items')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+                      "apiVersion": "2024-05-01",
+                      "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'get-blocklist-item', 'policy')]",
+                      "properties": {
+                        "format": "rawxml",
+                        "value": "[variables('pinReadPolicy')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
+                        "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'get-blocklist-item')]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "id": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
+                    },
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('apimName')]"
+                    },
+                    "gatewayUrl": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.ApiManagement/service', parameters('apimName')), '2024-05-01').gatewayUrl]"
+                    },
+                    "principalId": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.ApiManagement/service', parameters('apimName')), '2024-05-01', 'full').identity.principalId]"
+                    },
+                    "functionSubscriptionName": {
+                      "type": "string",
+                      "value": "function-app"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'monitoring')]",
+                "[resourceId('Microsoft.Resources/deployments', 'cs-primary')]",
+                "[resourceId('Microsoft.Resources/deployments', 'redis')]",
+                "[resourceId('Microsoft.Resources/deployments', 'cs-secondary')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "function",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "functionAppName": {
+                    "value": "[format('func-{0}', variables('prefix'))]"
+                  },
+                  "appServicePlanName": {
+                    "value": "[format('plan-{0}', variables('prefix'))]"
+                  },
+                  "storageAccountName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.name.value]"
+                  },
+                  "apimName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.name.value]"
+                  },
+                  "apimGatewayUrl": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.gatewayUrl.value]"
+                  },
+                  "apimSubscriptionName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.functionSubscriptionName.value]"
+                  },
+                  "virtualNetworkSubnetId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.functionsSubnetId.value]"
+                  },
+                  "storageBlobPrivateEndpointId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.blobPrivateEndpointId.value]"
+                  },
+                  "corsAllowedOrigins": {
+                    "value": "[parameters('corsAllowedOrigins')]"
+                  },
+                  "maxRequestBodyBytes": {
+                    "value": "[parameters('maxRequestBodyBytes')]"
+                  },
+                  "appInsightsConnectionString": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
+                  },
+                  "tags": {
+                    "value": "[variables('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "15927981697456134766"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string"
+                    },
+                    "functionAppName": {
+                      "type": "string"
+                    },
+                    "appServicePlanName": {
+                      "type": "string"
+                    },
+                    "storageAccountName": {
+                      "type": "string"
+                    },
+                    "apimName": {
+                      "type": "string"
+                    },
+                    "apimGatewayUrl": {
+                      "type": "string"
+                    },
+                    "apimSubscriptionName": {
+                      "type": "string"
+                    },
+                    "virtualNetworkSubnetId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Resource ID of the VNet subnet used for regional VNet integration. Must be delegated to Microsoft.App/environments for FC1."
+                      }
+                    },
+                    "storageBlobPrivateEndpointId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Resource ID of the storage blob private endpoint. Only used to force the function module to wait for the PE to finish provisioning before the platform restarts the app."
+                      }
+                    },
+                    "corsAllowedOrigins": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "Browser CORS allow-list. Defaults to [] (no browser origins). The Function is meant for server-to-server traffic; only widen this if you fully trust the listed origins."
+                      }
+                    },
+                    "maxRequestBodyBytes": {
+                      "type": "int",
+                      "defaultValue": "[mul(mul(10, 1024), 1024)]",
+                      "metadata": {
+                        "description": "Maximum request body in bytes (mirrored to MAX_REQUEST_BODY_BYTES). Default 10 MiB matches Content Safety upstream limits."
+                      }
+                    },
+                    "appInsightsConnectionString": {
+                      "type": "securestring"
+                    },
+                    "tags": {
+                      "type": "object"
+                    }
+                  },
+                  "variables": {
+                    "_storagePeDependency": "[parameters('storageBlobPrivateEndpointId')]"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Web/serverfarms",
+                      "apiVersion": "2024-04-01",
+                      "name": "[parameters('appServicePlanName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "sku": {
+                        "name": "FC1",
+                        "tier": "FlexConsumption"
+                      },
+                      "kind": "functionapp",
+                      "properties": {
+                        "reserved": true
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Web/sites",
+                      "apiVersion": "2024-04-01",
+                      "name": "[parameters('functionAppName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[union(parameters('tags'), createObject('azd-service-name', 'api'))]",
+                      "kind": "functionapp,linux",
+                      "identity": {
+                        "type": "SystemAssigned"
+                      },
+                      "properties": {
+                        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
+                        "httpsOnly": true,
+                        "publicNetworkAccess": "Enabled",
+                        "virtualNetworkSubnetId": "[parameters('virtualNetworkSubnetId')]",
+                        "siteConfig": {
+                          "minTlsVersion": "1.2",
+                          "ftpsState": "Disabled",
+                          "http20Enabled": true,
+                          "cors": {
+                            "allowedOrigins": "[parameters('corsAllowedOrigins')]"
+                          },
+                          "appSettings": [
+                            {
+                              "name": "AzureWebJobsStorage__accountName",
+                              "value": "[parameters('storageAccountName')]"
+                            },
+                            {
+                              "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                              "value": "[parameters('appInsightsConnectionString')]"
+                            },
+                            {
+                              "name": "APIM_GATEWAY_URL",
+                              "value": "[parameters('apimGatewayUrl')]"
+                            },
+                            {
+                              "name": "APIM_SUBSCRIPTION_KEY",
+                              "value": "[listSecrets(resourceId('Microsoft.ApiManagement/service/subscriptions', parameters('apimName'), parameters('apimSubscriptionName')), '2024-05-01').primaryKey]"
+                            },
+                            {
+                              "name": "MAX_REQUEST_BODY_BYTES",
+                              "value": "[string(parameters('maxRequestBodyBytes'))]"
+                            },
+                            {
+                              "name": "CONTENT_SAFETY_API_VERSION",
+                              "value": "2024-09-01"
+                            },
+                            {
+                              "name": "CONTENT_SAFETY_PREVIEW_API_VERSION",
+                              "value": "2024-09-15-preview"
+                            },
+                            {
+                              "name": "STORAGE_BLOB_PE_ID",
+                              "value": "[variables('_storagePeDependency')]"
+                            }
+                          ]
+                        },
+                        "functionAppConfig": {
+                          "deployment": {
+                            "storage": {
+                              "type": "blobContainer",
+                              "value": "[format('{0}app-package-deployments', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2024-01-01').primaryEndpoints.blob)]",
+                              "authentication": {
+                                "type": "SystemAssignedIdentity"
+                              }
+                            }
+                          },
+                          "runtime": {
+                            "name": "python",
+                            "version": "3.11"
+                          },
+                          "scaleAndConcurrency": {
+                            "instanceMemoryMB": 2048,
+                            "maximumInstanceCount": 100
+                          }
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "id": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]"
+                    },
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('functionAppName')]"
+                    },
+                    "hostname": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('functionAppName')), '2024-04-01').defaultHostName]"
+                    },
+                    "principalId": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('functionAppName')), '2024-04-01', 'full').identity.principalId]"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'apim')]",
+                "[resourceId('Microsoft.Resources/deployments', 'monitoring')]",
+                "[resourceId('Microsoft.Resources/deployments', 'network')]",
+                "[resourceId('Microsoft.Resources/deployments', 'storage')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "rbac",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "apimPrincipalId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.principalId.value]"
+                  },
+                  "functionPrincipalId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'function'), '2025-04-01').outputs.principalId.value]"
+                  },
+                  "primaryContentSafetyName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cs-primary'), '2025-04-01').outputs.name.value]"
+                  },
+                  "secondaryContentSafetyName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cs-secondary'), '2025-04-01').outputs.name.value]"
+                  },
+                  "storageAccountName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.name.value]"
+                  },
+                  "keyVaultName": "[if(parameters('useExternalCache'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.name.value), createObject('value', ''))]",
+                  "useExternalCache": {
+                    "value": "[parameters('useExternalCache')]"
+                  },
+                  "principalId": {
+                    "value": "[parameters('principalId')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "7861320557680922469"
+                    }
+                  },
+                  "parameters": {
+                    "apimPrincipalId": {
+                      "type": "string"
+                    },
+                    "functionPrincipalId": {
+                      "type": "string"
+                    },
+                    "primaryContentSafetyName": {
+                      "type": "string"
+                    },
+                    "secondaryContentSafetyName": {
+                      "type": "string"
+                    },
+                    "storageAccountName": {
+                      "type": "string"
+                    },
+                    "keyVaultName": {
+                      "type": "string"
+                    },
+                    "useExternalCache": {
+                      "type": "bool"
+                    },
+                    "principalId": {
+                      "type": "string"
+                    }
+                  },
+                  "variables": {
+                    "cognitiveServicesUserRoleId": "a97b65f3-24c7-4388-baec-2e87135dc908",
+                    "storageBlobDataOwnerRoleId": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
+                    "storageQueueDataContributorRoleId": "974c5e8b-45b9-4653-ba55-5f855dd0fb88",
+                    "storageTableDataContributorRoleId": "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3",
+                    "keyVaultSecretsUserRoleId": "4633458b-17de-408a-b874-0445c86b69e6"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('primaryContentSafetyName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('primaryContentSafetyName')), parameters('apimPrincipalId'), variables('cognitiveServicesUserRoleId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesUserRoleId'))]",
+                        "principalId": "[parameters('apimPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('secondaryContentSafetyName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('secondaryContentSafetyName')), parameters('apimPrincipalId'), variables('cognitiveServicesUserRoleId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesUserRoleId'))]",
+                        "principalId": "[parameters('apimPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('functionPrincipalId'), variables('storageBlobDataOwnerRoleId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageBlobDataOwnerRoleId'))]",
+                        "principalId": "[parameters('functionPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('functionPrincipalId'), variables('storageQueueDataContributorRoleId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageQueueDataContributorRoleId'))]",
+                        "principalId": "[parameters('functionPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('functionPrincipalId'), variables('storageTableDataContributorRoleId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageTableDataContributorRoleId'))]",
+                        "principalId": "[parameters('functionPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[not(empty(parameters('principalId')))]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('primaryContentSafetyName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('primaryContentSafetyName')), parameters('principalId'), variables('cognitiveServicesUserRoleId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesUserRoleId'))]",
+                        "principalId": "[parameters('principalId')]",
+                        "principalType": "User"
+                      }
+                    },
+                    {
+                      "condition": "[not(empty(parameters('principalId')))]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('secondaryContentSafetyName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('secondaryContentSafetyName')), parameters('principalId'), variables('cognitiveServicesUserRoleId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesUserRoleId'))]",
+                        "principalId": "[parameters('principalId')]",
+                        "principalType": "User"
+                      }
+                    },
+                    {
+                      "condition": "[and(parameters('useExternalCache'), not(empty(parameters('principalId'))))]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+                      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), parameters('principalId'), variables('keyVaultSecretsUserRoleId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultSecretsUserRoleId'))]",
+                        "principalId": "[parameters('principalId')]",
+                        "principalType": "User"
+                      }
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'apim')]",
+                "[resourceId('Microsoft.Resources/deployments', 'function')]",
+                "[resourceId('Microsoft.Resources/deployments', 'keyvault')]",
+                "[resourceId('Microsoft.Resources/deployments', 'cs-primary')]",
+                "[resourceId('Microsoft.Resources/deployments', 'cs-secondary')]",
+                "[resourceId('Microsoft.Resources/deployments', 'storage')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "functionAppName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'function'), '2025-04-01').outputs.name.value]"
+            },
+            "functionAppHostname": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'function'), '2025-04-01').outputs.hostname.value]"
+            },
+            "apimGatewayUrl": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.gatewayUrl.value]"
+            },
+            "primaryContentSafetyName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cs-primary'), '2025-04-01').outputs.name.value]"
+            },
+            "secondaryContentSafetyName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cs-secondary'), '2025-04-01').outputs.name.value]"
+            },
+            "appInsightsName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsName.value]"
+            },
+            "storageAccountName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.name.value]"
+            },
+            "vnetName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.vnetName.value]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('resourceGroupName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "AZURE_LOCATION": {
+      "type": "string",
+      "value": "[parameters('location')]"
+    },
+    "AZURE_RESOURCE_GROUP": {
+      "type": "string",
+      "value": "[variables('resourceGroupName')]"
+    },
+    "FUNCTION_APP_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'main-resources'), '2025-04-01').outputs.functionAppName.value]"
+    },
+    "FUNCTION_APP_HOSTNAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'main-resources'), '2025-04-01').outputs.functionAppHostname.value]"
+    },
+    "APIM_GATEWAY_URL": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'main-resources'), '2025-04-01').outputs.apimGatewayUrl.value]"
+    },
+    "PRIMARY_CONTENT_SAFETY_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'main-resources'), '2025-04-01').outputs.primaryContentSafetyName.value]"
+    },
+    "SECONDARY_CONTENT_SAFETY_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'main-resources'), '2025-04-01').outputs.secondaryContentSafetyName.value]"
+    },
+    "APPLICATION_INSIGHTS_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'main-resources'), '2025-04-01').outputs.appInsightsName.value]"
+    },
+    "STORAGE_ACCOUNT_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'main-resources'), '2025-04-01').outputs.storageAccountName.value]"
+    },
+    "AZURE_USE_EXTERNAL_CACHE": {
+      "type": "bool",
+      "value": "[parameters('useExternalCache')]"
+    },
+    "AZURE_REDIS_SKU": {
+      "type": "string",
+      "value": "[parameters('redisSku')]"
+    },
+    "AZURE_REDIS_LOCATION": {
+      "type": "string",
+      "value": "[if(empty(parameters('redisLocation')), parameters('location'), parameters('redisLocation'))]"
+    },
+    "AZURE_IDEMPOTENCY_TTL_SECONDS": {
+      "type": "int",
+      "value": "[parameters('idempotencyTtlSeconds')]"
+    }
+  }
+}

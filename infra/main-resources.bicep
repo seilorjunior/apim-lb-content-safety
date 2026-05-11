@@ -43,13 +43,29 @@ module monitoring 'modules/monitoring.bicep' = {
 }
 
 // -----------------------------------------------------------------------------
-// 2. Storage (Function App deployment storage, MI-only)
+// 2. Network (VNet + subnets + private DNS for blob private endpoint)
+//    Must deploy before storage because storage now binds a private endpoint
+//    into snet-pe and registers it under the blob private DNS zone.
+// -----------------------------------------------------------------------------
+module network 'modules/network.bicep' = {
+  name: 'network'
+  params: {
+    location: location
+    vnetName: 'vnet-${prefix}'
+    tags: tags
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 3. Storage (Function App deployment storage, MI-only, private endpoint)
 // -----------------------------------------------------------------------------
 module storage 'modules/storage.bicep' = {
   name: 'storage'
   params: {
     location: location
     storageAccountName: 'st${prefix}'
+    privateEndpointSubnetId: network.outputs.privateEndpointsSubnetId
+    blobPrivateDnsZoneId: network.outputs.blobPrivateDnsZoneId
     tags: tags
   }
 }
@@ -128,7 +144,8 @@ module apim 'modules/apim.bicep' = {
 }
 
 // -----------------------------------------------------------------------------
-// 6. Function App (Python, Flex Consumption, MI to storage and APIM)
+// 6. Function App (Python, Flex Consumption, MI to storage and APIM,
+//    VNet-integrated to reach storage privately)
 // -----------------------------------------------------------------------------
 module functionApp 'modules/function.bicep' = {
   name: 'function'
@@ -140,6 +157,8 @@ module functionApp 'modules/function.bicep' = {
     apimName: apim.outputs.name
     apimGatewayUrl: apim.outputs.gatewayUrl
     apimSubscriptionName: apim.outputs.functionSubscriptionName
+    virtualNetworkSubnetId: network.outputs.functionsSubnetId
+    storageBlobPrivateEndpointId: storage.outputs.blobPrivateEndpointId
     corsAllowedOrigins: corsAllowedOrigins
     maxRequestBodyBytes: maxRequestBodyBytes
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
@@ -173,3 +192,5 @@ output apimGatewayUrl string = apim.outputs.gatewayUrl
 output primaryContentSafetyName string = primaryCs.outputs.name
 output secondaryContentSafetyName string = secondaryCs.outputs.name
 output appInsightsName string = monitoring.outputs.appInsightsName
+output storageAccountName string = storage.outputs.name
+output vnetName string = network.outputs.vnetName

@@ -83,6 +83,7 @@ output APIM_GATEWAY_URL string = resources.outputs.apimGatewayUrl
 output PRIMARY_CONTENT_SAFETY_NAME string = resources.outputs.primaryContentSafetyName
 output SECONDARY_CONTENT_SAFETY_NAME string = resources.outputs.secondaryContentSafetyName
 output APPLICATION_INSIGHTS_NAME string = resources.outputs.appInsightsName
+output STORAGE_ACCOUNT_NAME string = resources.outputs.storageAccountName
 output AZURE_USE_EXTERNAL_CACHE bool = useExternalCache
 output AZURE_REDIS_SKU string = redisSku
 output AZURE_REDIS_LOCATION string = empty(redisLocation) ? location : redisLocation
