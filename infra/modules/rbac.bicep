@@ -9,7 +9,6 @@ param primaryContentSafetyName string
 param secondaryContentSafetyName string
 param storageAccountName string
 param keyVaultName string
-param useExternalCache bool
 param principalId string
 
 // Built-in role IDs
@@ -32,7 +31,9 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2024-01-01' existing 
   name: storageAccountName
 }
 
-resource keyVault 'Microsoft.KeyVault/vaults@2024-04-01-preview' existing = if (useExternalCache) {
+// Key Vault always exists - it holds the APIM subscription key secret
+// regardless of the external-cache toggle.
+resource keyVault 'Microsoft.KeyVault/vaults@2024-04-01-preview' existing = {
   name: keyVaultName
 }
 
@@ -118,9 +119,26 @@ resource devToSecondaryCs 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 }
 
 // -----------------------------------------------------------------------------
-// Optional (only when external cache is on): developer -> KV Secrets User
+// Function MI -> Key Vault Secrets User on the shared KV. Required so the
+// `@Microsoft.KeyVault(SecretUri=...)` reference for APIM_SUBSCRIPTION_KEY
+// resolves at App Service runtime.
 // -----------------------------------------------------------------------------
-resource devToKeyVault 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useExternalCache && !empty(principalId)) {
+resource functionToKeyVault 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, functionPrincipalId, keyVaultSecretsUserRoleId)
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
+    principalId: functionPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Optional: developer principal -> KV Secrets User (lets a human inspect/rotate
+// the APIM subscription key secret without leaving the portal). Gated on the
+// presence of a principal so CI runs (no principalId) don't grab the role.
+// -----------------------------------------------------------------------------
+resource devToKeyVault 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(principalId)) {
   name: guid(keyVault.id, principalId, keyVaultSecretsUserRoleId)
   scope: keyVault
   properties: {

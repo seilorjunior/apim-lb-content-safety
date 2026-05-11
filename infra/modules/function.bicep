@@ -4,13 +4,15 @@ param location string
 param functionAppName string
 param appServicePlanName string
 param storageAccountName string
-param apimName string
 param apimGatewayUrl string
-param apimSubscriptionName string
+@description('Key Vault secret URI for the APIM subscription primary key. Surfaced as APIM_SUBSCRIPTION_KEY via @Microsoft.KeyVault(SecretUri=...) so the literal value never enters appSettings or deployment history.')
+param apimSubscriptionKeySecretUri string
 @description('Resource ID of the VNet subnet used for regional VNet integration. Must be delegated to Microsoft.App/environments for FC1.')
 param virtualNetworkSubnetId string
 @description('Resource ID of the storage blob private endpoint. Only used to force the function module to wait for the PE to finish provisioning before the platform restarts the app.')
 param storageBlobPrivateEndpointId string
+@description('Resource ID of the Log Analytics workspace that receives FunctionApp diagnostic logs.')
+param logAnalyticsWorkspaceId string
 @description('Browser CORS allow-list. Defaults to [] (no browser origins). The Function is meant for server-to-server traffic; only widen this if you fully trust the listed origins.')
 param corsAllowedOrigins array = []
 @description('Maximum request body in bytes (mirrored to MAX_REQUEST_BODY_BYTES). Default 10 MiB matches Content Safety upstream limits.')
@@ -21,18 +23,6 @@ param tags object
 
 resource storage 'Microsoft.Storage/storageAccounts@2024-01-01' existing = {
   name: storageAccountName
-}
-
-// Read the APIM subscription primary key inline so the function can authenticate
-// to the APIM API. listSecrets() resolves at deployment time and the value is
-// only emitted into appSettings (which are KV-encrypted at rest by App Service).
-resource apim 'Microsoft.ApiManagement/service@2024-05-01' existing = {
-  name: apimName
-}
-
-resource apimSubscription 'Microsoft.ApiManagement/service/subscriptions@2024-05-01' existing = {
-  parent: apim
-  name: apimSubscriptionName
 }
 
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
@@ -105,7 +95,10 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         }
         {
           name: 'APIM_SUBSCRIPTION_KEY'
-          value: apimSubscription.listSecrets().primaryKey
+          // Resolved at App Service runtime via the function's MI + Key Vault
+          // Secrets User RBAC. The cleartext value never enters this template,
+          // appSettings storage, or deployment history.
+          value: '@Microsoft.KeyVault(SecretUri=${apimSubscriptionKeySecretUri})'
         }
         {
           name: 'MAX_REQUEST_BODY_BYTES'
@@ -147,6 +140,34 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         maximumInstanceCount: 100
       }
     }
+  }
+}
+
+// =============================================================================
+// Diagnostic settings - FunctionAppLogs (custom traces) + platform metrics to
+// the shared workspace. Flex Consumption only supports the FunctionAppLogs
+// category; AppServiceHTTPLogs / AppServiceConsoleLogs / AppServiceAppLogs are
+// rejected at ARM validation. App Insights (already wired via
+// APPLICATIONINSIGHTS_CONNECTION_STRING) is where structured request/trace
+// data lives.
+// =============================================================================
+resource functionDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  scope: functionApp
+  name: 'function-to-log-analytics'
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      {
+        category: 'FunctionAppLogs'
+        enabled: true
+      }
+    ]
+    metrics: [
+      {
+        category: 'AllMetrics'
+        enabled: true
+      }
+    ]
   }
 }
 

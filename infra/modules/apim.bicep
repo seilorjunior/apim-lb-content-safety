@@ -16,6 +16,12 @@ param secondaryContentSafetyName string
 param appInsightsId string
 @secure()
 param appInsightsKey string
+@description('Resource ID of the Log Analytics workspace that receives APIM platform logs (GatewayLogs).')
+param logAnalyticsWorkspaceId string
+@description('Key Vault name that stores the APIM "function-app" subscription primary key. The vault must already exist and the deployer must have Key Vault Secrets Officer (or RBAC equivalent) at deployment time.')
+param keyVaultName string
+@description('Name of the KV secret that will hold the APIM function-app subscription primary key.')
+param apimSubscriptionKeySecretName string = 'apim-subscription-function-app-key'
 param useExternalCache bool
 param redisConnectionStringSecretUri string
 @secure()
@@ -232,6 +238,26 @@ resource functionSubscription 'Microsoft.ApiManagement/service/subscriptions@202
     scope: api.id
     state: 'active'
     allowTracing: false
+  }
+}
+
+// =============================================================================
+// Persist the subscription primary key to Key Vault so the Function App can
+// reference it via `@Microsoft.KeyVault(SecretUri=...)` instead of receiving
+// the raw value in appSettings. listSecrets() is evaluated server-side by ARM
+// at deploy time and is NOT recorded in deployment history; only the secretUri
+// is surfaced as a module output.
+// =============================================================================
+resource keyVault 'Microsoft.KeyVault/vaults@2024-04-01-preview' existing = {
+  name: keyVaultName
+}
+
+resource apimSubscriptionKeySecret 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview' = {
+  parent: keyVault
+  name: apimSubscriptionKeySecretName
+  properties: {
+    value: functionSubscription.listSecrets().primaryKey
+    contentType: 'text/plain'
   }
 }
 
@@ -625,6 +651,36 @@ resource policyGetItem 'Microsoft.ApiManagement/service/apis/operations/policies
 }
 
 // =============================================================================
+// Diagnostic settings - ship platform logs (GatewayLogs) + AllMetrics to the
+// shared Log Analytics workspace so the operator can answer "did the rate-limit
+// fire?" / "who sent the malformed payload?" post-incident without hopping
+// through App Insights.
+// =============================================================================
+resource apimDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  scope: apim
+  name: 'apim-to-log-analytics'
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      {
+        category: 'GatewayLogs'
+        enabled: true
+      }
+      {
+        category: 'WebSocketConnectionLogs'
+        enabled: true
+      }
+    ]
+    metrics: [
+      {
+        category: 'AllMetrics'
+        enabled: true
+      }
+    ]
+  }
+}
+
+// =============================================================================
 // Outputs
 // =============================================================================
 output id string = apim.id
@@ -632,3 +688,4 @@ output name string = apim.name
 output gatewayUrl string = apim.properties.gatewayUrl
 output principalId string = apim.identity.principalId
 output functionSubscriptionName string = functionSubscription.name
+output apimSubscriptionKeySecretUri string = apimSubscriptionKeySecret.properties.secretUri

@@ -19,6 +19,18 @@ param maxRequestBodyBytes int
 
 var effectiveRedisLocation = empty(redisLocation) ? location : redisLocation
 
+// ------------------------------------------------------------
+// CORS wildcard guard (ADR 0001 "secure by default")
+// The Function App is meant for server-to-server traffic. A wildcard CORS
+// origin would silently grant any browser on the public internet permission
+// to invoke the API (subject to the APIM subscription key, but still a major
+// foot-gun). We strip '*' here, pass only the safe origins to the function
+// module, and surface a deployment output so operators can spot the silent
+// rewrite in azd's post-deploy summary.
+// ------------------------------------------------------------
+var corsHasWildcard = contains(corsAllowedOrigins, '*')
+var effectiveCorsAllowedOrigins = filter(corsAllowedOrigins, o => o != '*')
+
 // Resource naming uses a short hash of the resource group id to keep names
 // globally-unique while staying readable.
 var token = uniqueString(resourceGroup().id, environmentName)
@@ -94,9 +106,12 @@ module secondaryCs 'modules/contentsafety.bicep' = {
 }
 
 // -----------------------------------------------------------------------------
-// 4. (Opt-in) Key Vault + Azure Managed Redis for APIM external cache
+// 4. Key Vault (always-on; stores the APIM "function-app" subscription key as
+//    a secret so the Function references it via @Microsoft.KeyVault(SecretUri=...)
+//    instead of receiving the cleartext value through appSettings).
+//    Azure Managed Redis remains opt-in.
 // -----------------------------------------------------------------------------
-module keyVault 'modules/keyvault.bicep' = if (useExternalCache) {
+module keyVault 'modules/keyvault.bicep' = {
   name: 'keyvault'
   params: {
     location: location
@@ -113,7 +128,7 @@ module redis 'modules/redis.bicep' = if (useExternalCache) {
     location: effectiveRedisLocation
     clusterName: 'amr-${prefix}'
     skuName: redisSku
-    keyVaultName: useExternalCache ? keyVault!.outputs.name : ''
+    keyVaultName: keyVault.outputs.name
     secretName: 'redis-connection-string'
     tags: tags
   }
@@ -135,6 +150,8 @@ module apim 'modules/apim.bicep' = {
     secondaryContentSafetyName: secondaryCs.outputs.name
     appInsightsId: monitoring.outputs.appInsightsId
     appInsightsKey: monitoring.outputs.appInsightsInstrumentationKey
+    logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
+    keyVaultName: keyVault.outputs.name
     useExternalCache: useExternalCache
     redisConnectionStringSecretUri: useExternalCache ? redis!.outputs.connectionStringSecretUri : ''
     redisConnectionString: useExternalCache ? redis!.outputs.connectionString : ''
@@ -154,12 +171,12 @@ module functionApp 'modules/function.bicep' = {
     functionAppName: 'func-${prefix}'
     appServicePlanName: 'plan-${prefix}'
     storageAccountName: storage.outputs.name
-    apimName: apim.outputs.name
     apimGatewayUrl: apim.outputs.gatewayUrl
-    apimSubscriptionName: apim.outputs.functionSubscriptionName
+    apimSubscriptionKeySecretUri: apim.outputs.apimSubscriptionKeySecretUri
     virtualNetworkSubnetId: network.outputs.functionsSubnetId
     storageBlobPrivateEndpointId: storage.outputs.blobPrivateEndpointId
-    corsAllowedOrigins: corsAllowedOrigins
+    logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
+    corsAllowedOrigins: effectiveCorsAllowedOrigins
     maxRequestBodyBytes: maxRequestBodyBytes
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     tags: tags
@@ -177,8 +194,7 @@ module rbac 'modules/rbac.bicep' = {
     primaryContentSafetyName: primaryCs.outputs.name
     secondaryContentSafetyName: secondaryCs.outputs.name
     storageAccountName: storage.outputs.name
-    keyVaultName: useExternalCache ? keyVault!.outputs.name : ''
-    useExternalCache: useExternalCache
+    keyVaultName: keyVault.outputs.name
     principalId: principalId
   }
 }
@@ -194,3 +210,5 @@ output secondaryContentSafetyName string = secondaryCs.outputs.name
 output appInsightsName string = monitoring.outputs.appInsightsName
 output storageAccountName string = storage.outputs.name
 output vnetName string = network.outputs.vnetName
+@description('True if AZURE_CORS_ALLOWED_ORIGINS contained the wildcard ("*") and it was silently stripped before reaching the Function App. Treat as a misconfiguration to fix at the caller.')
+output corsWildcardSilentlyStripped bool = corsHasWildcard
