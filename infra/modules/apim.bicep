@@ -27,6 +27,8 @@ param redisConnectionStringSecretUri string
 @secure()
 param redisConnectionString string
 param idempotencyTtlSeconds int
+@description('Maximum request body size in bytes. Surfaced as APIM named value {{max-request-body-bytes}} and enforced by the api-base.xml policy (returns 413 PayloadTooLarge before the call reaches Content Safety). Defense-in-depth: the Function App enforces the same cap on inbound bodies via MAX_REQUEST_BODY_BYTES.')
+param maxRequestBodyBytes int
 param tags object
 
 // =============================================================================
@@ -104,6 +106,19 @@ resource idempotencyTtlNv 'Microsoft.ApiManagement/service/namedValues@2024-05-0
   properties: {
     displayName: 'idempotency-ttl-seconds'
     value: string(idempotencyTtlSeconds)
+    secret: false
+  }
+}
+
+// Substituted at policy parse time into the <check-body-size> block in
+// api-base.xml. Keeping it as a named value lets operators retune the cap
+// without redeploying the policy XML.
+resource maxBodyBytesNv 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  parent: apim
+  name: 'max-request-body-bytes'
+  properties: {
+    displayName: 'max-request-body-bytes'
+    value: string(maxRequestBodyBytes)
     secret: false
   }
 }
@@ -262,6 +277,8 @@ resource apimSubscriptionKeySecret 'Microsoft.KeyVault/vaults/secrets@2024-04-01
 }
 
 // API-level base policy (retry + circuit breaker behaviour + correlation).
+// dependsOn the named values referenced via {{...}} in api-base.xml so the
+// policy parser can resolve them on first deploy.
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = {
   parent: api
   name: 'policy'
@@ -273,6 +290,9 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = 
       pool.name
     )
   }
+  dependsOn: [
+    maxBodyBytesNv
+  ]
 }
 
 // =============================================================================

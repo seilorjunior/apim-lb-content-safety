@@ -18,6 +18,28 @@
   <inbound>
     <base />
     <!--
+      Reject oversized request bodies at the gateway, BEFORE rate-limit/quota
+      counters tick and before the call reaches Content Safety. The
+      {{max-request-body-bytes}} named value is substituted as a literal int at
+      policy parse time, so this is a pure header-read + constant-compare with
+      no Razor evaluation cost. Defense-in-depth: the Function App also caps
+      inbound bodies at MAX_REQUEST_BODY_BYTES; this layer protects against
+      any future caller that bypasses the function and hits APIM directly.
+      check-body-size is intentionally NOT used: validate-content's max-size
+      is hard-capped at 4 MB, but our default is 10 MiB.
+    -->
+    <choose>
+      <when condition="@(int.Parse(context.Request.Headers.GetValueOrDefault(&quot;Content-Length&quot;, &quot;0&quot;)) > {{max-request-body-bytes}})">
+        <return-response>
+          <set-status code="413" reason="PayloadTooLarge" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>{"code":"PayloadTooLarge","message":"Request body exceeds the {{max-request-body-bytes}}-byte limit."}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <!--
       Throttle per APIM subscription. The retry-after value (seconds) is echoed
       via a 429 response by APIM. Numbers tuned for a thin proxy in front of
       Content Safety: 60 req/min burst, 10000 req/day ceiling.

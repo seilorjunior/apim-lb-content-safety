@@ -100,3 +100,110 @@ via explicit configuration, and bound all upstream interactions:
 - ADR 0003 (proposed): introduce a per-tenant APIM subscription scheme for
   multi-tenant deployments, replacing the single shared `function-app`
   subscription.
+
+## 2026-05 follow-up (Tier 1 hardening pass)
+
+A second-pass review after the private-endpoint migration surfaced four
+defense-in-depth gaps. All were fixed in a single PR; the rationale is captured
+here so future maintainers know which knobs are tunable.
+
+### Key Vault reference for the APIM subscription key
+
+ADR 0002 (proposed above) is now **implemented**. The Bicep flow is:
+
+1. `apim.bicep` reads the per-API subscription primary key via
+   `apimSubscription.listSecrets().primaryKey` (server-side at deploy time).
+2. The value is written to Key Vault as secret
+   `apim-subscription-function-app-key`. `listSecrets()` is NOT recorded in
+   deployment history; only the secret URI is surfaced as a module output.
+3. `function.bicep` sets `APIM_SUBSCRIPTION_KEY` to
+   `@Microsoft.KeyVault(SecretUri=${apimSubscriptionKeySecretUri})`. App Service
+   resolves it at runtime using the function's system-assigned MI + the
+   `Key Vault Secrets User` role.
+
+**Consequence:** the cleartext key never appears in `appSettings` or in any
+deployment history snapshot. Rotation no longer requires a function redeploy —
+update the secret value and the function picks it up on the next config refresh
+(or on demand via `az functionapp restart`).
+
+### Rate-limit + quota at the APIM layer
+
+`api-base.xml` now applies two throttles on the inbound path, keyed by APIM
+subscription id (or gateway IP for unauthenticated callers):
+
+| Policy             | Limit               | Renewal | Tunable via            |
+| ------------------ | ------------------- | ------- | ---------------------- |
+| `rate-limit-by-key`| 60 calls            | 60 s    | edit `api-base.xml`    |
+| `quota-by-key`     | 10 000 calls        | 86 400 s| edit `api-base.xml`    |
+
+**How to tune:** the numbers are tuned for "thin proxy in front of Content
+Safety". Increase them when adding a second high-volume API consumer. Both
+limits are per APIM subscription, so adding a new subscription gets its own
+fresh bucket — no need to bump the global limit for a single new tenant.
+Note that these caps apply to traffic *through APIM*; the Function App is
+upstream of APIM and is NOT rate-limited by these policies (see the open
+question below).
+
+### Body-size rejection at APIM (`<choose>` + `<return-response>`)
+
+`api-base.xml` rejects any inbound request whose `Content-Length` exceeds the
+`max-request-body-bytes` named value (sourced from the `maxRequestBodyBytes`
+Bicep parameter; default 10 MiB). 413 fires before rate-limit/quota counters
+tick and before the call reaches the Content Safety pool. The check uses
+`int.Parse(Content-Length)` + literal-int compare — no Razor cost, no body
+materialisation.
+
+**Why not `<validate-content>`:** APIM's built-in `validate-content` policy
+caps `max-size` at 4 MB, but our default is 10 MiB (matches the Content Safety
+image hard limit). The `<choose>` pattern is the supported workaround for
+larger caps. The Function App still enforces `MAX_REQUEST_BODY_BYTES`
+independently — APIM is defense-in-depth for any future caller that bypasses
+the function.
+
+### Log retention bumped from 30 to 90 days
+
+`monitoring.bicep` now exposes a `logRetentionInDays` parameter (default 90,
+range 30–730). Both APIM (`GatewayLogs` + `WebSocketConnectionLogs`) and the
+Function App (`FunctionAppLogs`) are wired to the shared Log Analytics workspace
+via `diagnosticSettings`.
+
+**FC1 gotcha:** Flex Consumption Function Apps reject the `AppServiceHTTPLogs`,
+`AppServiceConsoleLogs`, and `AppServiceAppLogs` categories at ARM validation —
+those are Web App–only. The diagnostic settings here ship `FunctionAppLogs`
+(structured worker traces) and `AllMetrics` only. Structured request/response
+data lives in App Insights via `APPLICATIONINSIGHTS_CONNECTION_STRING`.
+
+### CORS wildcard guard
+
+`main-resources.bicep` filters `'*'` out of `corsAllowedOrigins` before passing
+the array to `function.bicep`. The original list is checked for wildcard
+presence and a `corsWildcardSilentlyStripped` output is set to `true` when it
+was — operators see the silent rewrite in azd's post-deploy summary instead of
+discovering a wide-open browser surface in prod.
+
+This is intentionally a silent strip rather than a hard failure: misconfiguring
+`AZURE_CORS_ALLOWED_ORIGINS=*` is a common foot-gun, and 413-ing the deploy
+felt worse than logging the rewrite and continuing with a safe-by-default
+configuration. The output flag makes the misconfiguration visible without
+breaking the deploy loop.
+
+### Open question — Function App ingress hardening
+
+The Function is `publicNetworkAccess: 'Enabled'` and reachable by anyone with
+the function key. The original proposal was to allow-list APIM's outbound IP
+on the function, but that inverts the data flow (clients reach the **Function**
+first, which then forwards to APIM). Locking the function to APIM's IP would
+black-hole all legitimate callers. Alternatives under consideration:
+
+1. **Front Door + WAF** in front of the function (rate-limit at the edge,
+   WAF on common attack patterns). ~$35/mo base + traffic.
+2. **Private Endpoint on the function** + a known public ingress (App Gateway
+   or Front Door Premium).
+3. **Move the smart-proxy logic into APIM** (idempotency, body-size, retry are
+   all APIM-feasible) and retire the function entirely. Bigger refactor.
+4. **Accept the current posture** (function key + rate-limit-on-APIM caps
+   the downstream blast radius). Rate-limit-on-APIM does *not* prevent the
+   function from being scaled out by an authenticated abuser, but the
+   function-key requirement makes anonymous abuse impossible.
+
+No decision yet; tracking as ADR 0004 (proposed).

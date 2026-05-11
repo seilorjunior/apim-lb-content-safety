@@ -156,6 +156,7 @@ module apim 'modules/apim.bicep' = {
     redisConnectionStringSecretUri: useExternalCache ? redis!.outputs.connectionStringSecretUri : ''
     redisConnectionString: useExternalCache ? redis!.outputs.connectionString : ''
     idempotencyTtlSeconds: idempotencyTtlSeconds
+    maxRequestBodyBytes: maxRequestBodyBytes
     tags: tags
   }
 }
@@ -205,6 +206,8 @@ module rbac 'modules/rbac.bicep' = {
 output functionAppName string = functionApp.outputs.name
 output functionAppHostname string = functionApp.outputs.hostname
 output apimGatewayUrl string = apim.outputs.gatewayUrl
+output apimName string = apim.outputs.name
+output keyVaultName string = keyVault.outputs.name
 output primaryContentSafetyName string = primaryCs.outputs.name
 output secondaryContentSafetyName string = secondaryCs.outputs.name
 output appInsightsName string = monitoring.outputs.appInsightsName

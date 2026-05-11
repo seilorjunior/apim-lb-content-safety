@@ -44,5 +44,14 @@ jobs:
         # Scan the whole api package; pyproject.toml excludes tests/.venv/build.
         run: bandit -c pyproject.toml -r .
 
+      - name: pip-audit (runtime dependencies)
+        # CodeQL covers our source code; this catches CVEs in the transitive
+        # dependency graph of requirements.txt that CodeQL does not see.
+        # Scoped to runtime deps only — dev-only deps (pytest, ruff, bandit)
+        # are not shipped to Azure and would create noise.
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --disable-pip --strict
+
       - name: Pytest with coverage
         run: pytest --cov=function_app --cov-report=term-missing --cov-fail-under=80

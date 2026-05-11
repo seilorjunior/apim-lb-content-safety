@@ -26,6 +26,12 @@ from urllib.parse import parse_qsl, quote, urlsplit
 import azure.functions as func
 import httpx
 
+# httpx logs every request URL (including query string) at INFO. Our caller-facing
+# routes accept `?code=<function-key>` for FUNCTION auth, so leaving httpx at INFO
+# would leak that key into App Insights traces. Drop httpx to WARNING; our own
+# proxy log line (logs the path only, never the query string) still runs at INFO.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # ----------------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------------
