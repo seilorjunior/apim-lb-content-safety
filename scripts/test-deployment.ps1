@@ -234,7 +234,7 @@ function Set-BackendConfiguration {
     $body = @{
         properties = @{ url = $BackendUrl; circuitBreaker = $CircuitBreaker }
     } | ConvertTo-Json -Depth 20 -Compress
-    $result = az rest --method patch --url $ResourceUrl --body $body --output none 2>&1
+    $result = az rest --method patch --url $ResourceUrl --headers 'If-Match=*' --body $body --output none 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Backend configuration update failed: $result" }
 }
 
