@@ -54,4 +54,4 @@ jobs:
           pip-audit -r requirements.txt --disable-pip --strict
 
       - name: Pytest with coverage
-        run: pytest --cov=function_app --cov-report=term-missing --cov-fail-under=80
+        run: pytest --cov --cov-report=term-missing --cov-fail-under=80
