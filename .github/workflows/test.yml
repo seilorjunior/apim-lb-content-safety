@@ -51,7 +51,7 @@ jobs:
         # are not shipped to Azure and would create noise.
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --disable-pip --strict
+          pip-audit -r requirements.txt --strict
 
       - name: Pytest with coverage
         run: pytest --cov --cov-report=term-missing --cov-fail-under=80
