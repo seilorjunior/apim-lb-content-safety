@@ -3,7 +3,12 @@
   - Sets the round-robin pool as the default backend.
   - Authenticates upstream with APIM's managed identity (Cognitive Services
     audience).
-  - Retries on 429/5xx three times with exponential-ish backoff.
+  - Throttles per subscription (rate-limit: short burst window;
+    quota: 24h ceiling). Counter keys fall back to the gateway IP for unauthenticated
+    requests; in practice every authenticated caller has a subscription, but the
+    fallback prevents a NullReferenceException if the API is ever opened anonymously.
+  - Owns the retry budget: only GET/HEAD/OPTIONS, at most four attempts.
+    Mutations and analysis POSTs are forwarded once, even on ambiguous errors.
   - Echoes a correlation id (W3C traceparent or x-ms-client-request-id) on
     every response.
 
@@ -13,6 +18,51 @@
 <policies>
   <inbound>
     <base />
+    <!-- Durable idempotency is implemented at the Function ingress, not here. -->
+    <choose>
+      <when condition='@(context.Request.Headers.ContainsKey("Idempotency-Key"))'>
+        <return-response>
+          <set-status code="400" reason="IdempotencyRequiresFunction" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>{"code":"IdempotencyRequiresFunction","message":"Use the Function endpoint for durable idempotent mutations."}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <!--
+      Reject oversized request bodies at the gateway, BEFORE rate-limit/quota
+      counters tick and before the call reaches Content Safety. The
+      {{max-request-body-bytes}} named value is substituted as a literal int at
+      policy parse time, so this is a pure header-read + constant-compare with
+      no Razor evaluation cost. Defense-in-depth: the Function App also caps
+      inbound bodies at MAX_REQUEST_BODY_BYTES; this layer protects against
+      any future caller that bypasses the function and hits APIM directly.
+      check-body-size is intentionally NOT used: validate-content's max-size
+      is hard-capped at 4 MB, but our default is 10 MiB.
+    -->
+    <choose>
+      <when condition="@(int.Parse(context.Request.Headers.GetValueOrDefault(&quot;Content-Length&quot;, &quot;0&quot;)) > {{max-request-body-bytes}})">
+        <return-response>
+          <set-status code="413" reason="PayloadTooLarge" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>{"code":"PayloadTooLarge","message":"Request body exceeds the {{max-request-body-bytes}}-byte limit."}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <!--
+      Throttle per APIM subscription. The retry-after value (seconds) is echoed
+      via a 429 response by APIM. Numbers tuned for a thin proxy in front of
+      Content Safety: 60 req/min burst, 10000 req/day ceiling.
+    -->
+    <rate-limit-by-key calls="60"
+                       renewal-period="60"
+                       counter-key="@(context.Subscription?.Id ?? context.Request.IpAddress)" />
+    <quota-by-key calls="10000"
+                  renewal-period="86400"
+                  counter-key="@(context.Subscription?.Id ?? context.Request.IpAddress)" />
     <set-backend-service backend-id="__POOL_BACKEND_ID__" />
     <authentication-managed-identity resource="https://cognitiveservices.azure.com" />
     <set-header name="x-correlation-id" exists-action="skip">
@@ -20,13 +70,15 @@
     </set-header>
   </inbound>
   <backend>
-    <retry condition="@(context.Response.StatusCode == 429 || (context.Response.StatusCode >= 500 &amp;&amp; context.Response.StatusCode &lt; 600))"
+    <retry condition='@((context.Request.Method == "GET" || context.Request.Method == "HEAD" || context.Request.Method == "OPTIONS") &amp;&amp; context.Response != null &amp;&amp; (context.Response.StatusCode == 429 || (context.Response.StatusCode >= 500 &amp;&amp; context.Response.StatusCode &lt; 600)))'
            count="3"
            interval="1"
-           max-interval="10"
+           max-interval="5"
            delta="2"
            first-fast-retry="false">
-      <forward-request buffer-request-body="true" />
+      <!-- At most 4 x 10 s + 3 x 5 s for reads; one 50 s attempt for writes. -->
+      <forward-request buffer-request-body="true"
+                       timeout='@((context.Request.Method == "GET" || context.Request.Method == "HEAD" || context.Request.Method == "OPTIONS") ? 10 : 50)' />
     </retry>
   </backend>
   <outbound>

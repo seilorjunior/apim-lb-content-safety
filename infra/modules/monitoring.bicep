@@ -2,6 +2,10 @@
 param location string
 param workspaceName string
 param appInsightsName string
+@description('Workspace retention in days. 90 keeps a full quarter of operational evidence — enough for most security investigations without paying for the long-term archive tier.')
+@minValue(30)
+@maxValue(730)
+param logRetentionInDays int = 90
 param tags object
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -12,7 +16,7 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
     sku: {
       name: 'PerGB2018'
     }
-    retentionInDays: 30
+    retentionInDays: logRetentionInDays
     features: {
       enableLogAccessUsingOnlyResourcePermissions: true
     }
