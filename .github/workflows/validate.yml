@@ -15,7 +15,7 @@ jobs:
     name: Bicep build + lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Install Bicep
         run: az bicep install
@@ -32,20 +32,34 @@ jobs:
     name: APIM policy XML well-formedness
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
-      - name: Validate every policy XML
+      - name: Install xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+
+      # Expressions must use valid XML quoting and entity escaping.
+      # XML parsing does not replace deploying the policies to APIM.
+      - name: Structural validation of every policy XML
         run: |
           set -euo pipefail
           fail=0
           for f in infra/modules/policies/*.xml; do
             echo "== $f =="
-            if ! xmllint --noout "$f"; then
+            if ! xmllint --noout "$f" 2> /tmp/xmllint.err; then
+              echo "::error file=$f::Invalid policy XML"
+              cat /tmp/xmllint.err
               fail=1
             fi
+            # Sanity: file must contain the four standard policy sections.
+            for section in '<policies' '<inbound>' '<backend>' '<outbound>' '<on-error>' '</policies>'; do
+              if ! grep -q "$section" "$f"; then
+                echo "::error file=$f::Missing required section: $section"
+                fail=1
+              fi
+            done
           done
           if [ $fail -ne 0 ]; then
-            echo "::error::One or more policy XML files are malformed"
+            echo "::error::One or more policy XML files failed structural validation"
             exit 1
           fi
 
@@ -53,7 +67,7 @@ jobs:
     name: Markdown lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: DavidAnson/markdownlint-cli2-action@v17
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: DavidAnson/markdownlint-cli2-action@db43aef879112c3119a410d69f66701e0d530809  # v17
         with:
           globs: '**/*.md'

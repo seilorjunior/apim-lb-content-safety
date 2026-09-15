@@ -28,13 +28,21 @@ param redisSku string = 'Balanced_B0'
 @description('Region for Azure Managed Redis. Leave empty (default) to co-locate with the primary location; override (e.g. via AZURE_REDIS_LOCATION) when the primary region has capacity issues for the chosen Redis SKU. Cross-region traffic from APIM to Redis is TCP-only and adds a few ms of latency.')
 param redisLocation string = ''
 
-@description('Idempotency cache TTL in seconds for blocklist mutations. Range 60-604800. Default 3600.')
+@description('Function durable idempotency replay window in seconds for completed mutations. Pending/uncertain outcomes never expire automatically. Range 60-604800. Default 3600.')
 @minValue(60)
 @maxValue(604800)
 param idempotencyTtlSeconds int = 3600
 
 @description('Enable irreversible Key Vault purge protection. Leave false in dev.')
 param useProductionGuards bool = false
+
+@description('Browser CORS allow-list for the Function App. Default: empty array (server-to-server only). Add specific origins (e.g. ["https://app.contoso.com"]) when calling from a browser-hosted SPA.')
+param corsAllowedOrigins array = []
+
+@description('Maximum request body in bytes accepted by the Function before returning 413. Default 10 MiB matches the Content Safety image hard limit.')
+@minValue(1024)
+@maxValue(104857600)
+param maxRequestBodyBytes int = 10 * 1024 * 1024
 
 var resourceGroupName = 'rg-${environmentName}'
 
@@ -59,6 +67,8 @@ module resources 'main-resources.bicep' = {
     redisLocation: redisLocation
     idempotencyTtlSeconds: idempotencyTtlSeconds
     useProductionGuards: useProductionGuards
+    corsAllowedOrigins: corsAllowedOrigins
+    maxRequestBodyBytes: maxRequestBodyBytes
   }
 }
 
@@ -67,11 +77,15 @@ module resources 'main-resources.bicep' = {
 // =============================================================================
 output AZURE_LOCATION string = location
 output AZURE_RESOURCE_GROUP string = rg.name
+output FUNCTION_APP_NAME string = resources.outputs.functionAppName
 output FUNCTION_APP_HOSTNAME string = resources.outputs.functionAppHostname
 output APIM_GATEWAY_URL string = resources.outputs.apimGatewayUrl
+output APIM_SERVICE_NAME string = resources.outputs.apimName
+output KEY_VAULT_NAME string = resources.outputs.keyVaultName
 output PRIMARY_CONTENT_SAFETY_NAME string = resources.outputs.primaryContentSafetyName
 output SECONDARY_CONTENT_SAFETY_NAME string = resources.outputs.secondaryContentSafetyName
 output APPLICATION_INSIGHTS_NAME string = resources.outputs.appInsightsName
+output STORAGE_ACCOUNT_NAME string = resources.outputs.storageAccountName
 output AZURE_USE_EXTERNAL_CACHE bool = useExternalCache
 output AZURE_REDIS_SKU string = redisSku
 output AZURE_REDIS_LOCATION string = empty(redisLocation) ? location : redisLocation

@@ -1,11 +1,11 @@
 name: test
 
 on:
+  # Always run on PRs to main so this check can be required by branch
+  # protection without blocking unrelated PRs (path-filtered required checks
+  # never report status when skipped, so PRs hang waiting for them).
   pull_request:
     branches: [main]
-    paths:
-      - 'src/api/**'
-      - '.github/workflows/test.yml'
   push:
     branches: [main]
     paths:
@@ -24,9 +24,9 @@ jobs:
         working-directory: src/api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -41,7 +41,17 @@ jobs:
         run: ruff check .
 
       - name: Bandit
-        run: bandit -c pyproject.toml -r function_app.py
+        # Scan the whole api package; pyproject.toml excludes tests/.venv/build.
+        run: bandit -c pyproject.toml -r .
+
+      - name: pip-audit (runtime dependencies)
+        # CodeQL covers our source code; this catches CVEs in the transitive
+        # dependency graph of requirements.txt that CodeQL does not see.
+        # Scoped to runtime deps only — dev-only deps (pytest, ruff, bandit)
+        # are not shipped to Azure and would create noise.
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --strict
 
       - name: Pytest with coverage
-        run: pytest --cov=function_app --cov-report=term-missing --cov-fail-under=80
+        run: pytest --cov --cov-report=term-missing --cov-fail-under=80
