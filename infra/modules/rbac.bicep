@@ -64,6 +64,8 @@ resource apimToSecondaryCs 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 // Function MI -> Storage data plane (blob/queue/table). Flex Consumption uses
 // blob for the deployment package + host metadata, queue + table for internal
 // scaling/locking; without queue & table roles workers fail to spawn.
+// The existing Blob Data Owner grant also covers atomic idempotency records in
+// the private idempotency container; no additional credential/grant is needed.
 // -----------------------------------------------------------------------------
 resource functionToStorageBlob 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(storageAccount.id, functionPrincipalId, storageBlobDataOwnerRoleId)

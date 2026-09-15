@@ -103,7 +103,7 @@ async def test_protected_material_passthrough(apim_mock) -> None:
 
 
 @pytest.mark.asyncio
-async def test_shield_prompt_forwards_idempotency_key(apim_mock) -> None:
+async def test_shield_prompt_consumes_idempotency_key(apim_mock) -> None:
     route = apim_mock.post(
         "/contentsafety/text:shieldPrompt",
         params={"api-version": "2024-09-01"},
@@ -122,7 +122,7 @@ async def test_shield_prompt_forwards_idempotency_key(apim_mock) -> None:
 
     assert route.called
     sent = route.calls.last.request
-    assert sent.headers.get("idempotency-key") == "abc123"
+    assert "idempotency-key" not in sent.headers
     assert resp.status_code == 200
 
 

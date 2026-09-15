@@ -1,7 +1,6 @@
 <!--
-  Stateless policy: pure round-robin via the pool. No pinning, no idempotency.
+  Stateless policy: round-robin via the pool. No ownership or idempotency state.
   Used for:
-    - POST /text:analyze
     - POST /image:analyze
     - POST /text:detectGroundedness
     - POST /text:detectProtectedMaterial
