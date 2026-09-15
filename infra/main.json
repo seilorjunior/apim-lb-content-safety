@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.41.2.15936",
-      "templateHash": "2114242973538430191"
+      "version": "0.46.1.21595",
+      "templateHash": "13662160087247157082"
     }
   },
   "parameters": {
@@ -65,7 +65,7 @@
       "minValue": 60,
       "maxValue": 604800,
       "metadata": {
-        "description": "Idempotency cache TTL in seconds for blocklist mutations. Range 60-604800. Default 3600."
+        "description": "Function durable idempotency replay window in seconds for completed mutations. Pending/uncertain outcomes never expire automatically. Range 60-604800. Default 3600."
       }
     },
     "useProductionGuards": {
@@ -156,8 +156,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.41.2.15936",
-              "templateHash": "10570987184365679359"
+              "version": "0.46.1.21595",
+              "templateHash": "61284841011312980"
             }
           },
           "parameters": {
@@ -197,6 +197,8 @@
           },
           "variables": {
             "effectiveRedisLocation": "[if(empty(parameters('redisLocation')), parameters('location'), parameters('redisLocation'))]",
+            "corsHasWildcard": "[contains(parameters('corsAllowedOrigins'), '*')]",
+            "effectiveCorsAllowedOrigins": "[filter(parameters('corsAllowedOrigins'), lambda('o', not(equals(lambdaVariables('o'), '*'))))]",
             "token": "[uniqueString(resourceGroup().id, parameters('environmentName'))]",
             "prefix": "[format('cs{0}', variables('token'))]",
             "tags": {
@@ -234,8 +236,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.41.2.15936",
-                      "templateHash": "3349948883489553572"
+                      "version": "0.46.1.21595",
+                      "templateHash": "14103129138149701794"
                     }
                   },
                   "parameters": {
@@ -247,6 +249,15 @@
                     },
                     "appInsightsName": {
                       "type": "string"
+                    },
+                    "logRetentionInDays": {
+                      "type": "int",
+                      "defaultValue": 90,
+                      "minValue": 30,
+                      "maxValue": 730,
+                      "metadata": {
+                        "description": "Workspace retention in days. 90 keeps a full quarter of operational evidence — enough for most security investigations without paying for the long-term archive tier."
+                      }
                     },
                     "tags": {
                       "type": "object"
@@ -263,7 +274,7 @@
                         "sku": {
                           "name": "PerGB2018"
                         },
-                        "retentionInDays": 30,
+                        "retentionInDays": "[parameters('logRetentionInDays')]",
                         "features": {
                           "enableLogAccessUsingOnlyResourcePermissions": true
                         }
@@ -339,8 +350,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.41.2.15936",
-                      "templateHash": "11084647551558267948"
+                      "version": "0.46.1.21595",
+                      "templateHash": "4662297945361957346"
                     }
                   },
                   "parameters": {
@@ -486,8 +497,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.41.2.15936",
-                      "templateHash": "2775109567762708872"
+                      "version": "0.46.1.21595",
+                      "templateHash": "9057608977625087666"
                     }
                   },
                   "parameters": {
@@ -549,6 +560,17 @@
                       "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
                       "apiVersion": "2024-01-01",
                       "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', 'app-package-deployments')]",
+                      "properties": {
+                        "publicAccess": "None"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageAccountName'), 'default')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+                      "apiVersion": "2024-01-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', 'idempotency')]",
                       "properties": {
                         "publicAccess": "None"
                       },
@@ -619,6 +641,10 @@
                       "type": "string",
                       "value": "app-package-deployments"
                     },
+                    "idempotencyContainerName": {
+                      "type": "string",
+                      "value": "idempotency"
+                    },
                     "blobPrivateEndpointId": {
                       "type": "string",
                       "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}-blob', parameters('storageAccountName')))]"
@@ -659,8 +685,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.41.2.15936",
-                      "templateHash": "9386805884685013245"
+                      "version": "0.46.1.21595",
+                      "templateHash": "13896948290999509340"
                     }
                   },
                   "parameters": {
@@ -763,8 +789,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.41.2.15936",
-                      "templateHash": "9386805884685013245"
+                      "version": "0.46.1.21595",
+                      "templateHash": "13896948290999509340"
                     }
                   },
                   "parameters": {
@@ -839,7 +865,6 @@
               }
             },
             {
-              "condition": "[parameters('useExternalCache')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "keyvault",
@@ -871,8 +896,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.41.2.15936",
-                      "templateHash": "10528888990888056444"
+                      "version": "0.46.1.21595",
+                      "templateHash": "9233451804706000491"
                     }
                   },
                   "parameters": {
@@ -954,7 +979,9 @@
                   "skuName": {
                     "value": "[parameters('redisSku')]"
                   },
-                  "keyVaultName": "[if(parameters('useExternalCache'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.name.value), createObject('value', ''))]",
+                  "keyVaultName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.name.value]"
+                  },
                   "secretName": {
                     "value": "redis-connection-string"
                   },
@@ -968,8 +995,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.41.2.15936",
-                      "templateHash": "2997015777871468531"
+                      "version": "0.46.1.21595",
+                      "templateHash": "13043353699004241743"
                     }
                   },
                   "parameters": {
@@ -1099,13 +1126,19 @@
                   "appInsightsKey": {
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsInstrumentationKey.value]"
                   },
+                  "logAnalyticsWorkspaceId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.workspaceId.value]"
+                  },
+                  "keyVaultName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.name.value]"
+                  },
                   "useExternalCache": {
                     "value": "[parameters('useExternalCache')]"
                   },
                   "redisConnectionStringSecretUri": "[if(parameters('useExternalCache'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'redis'), '2025-04-01').outputs.connectionStringSecretUri.value), createObject('value', ''))]",
                   "redisConnectionString": "[if(parameters('useExternalCache'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'redis'), '2025-04-01').outputs.connectionString.value), createObject('value', ''))]",
-                  "idempotencyTtlSeconds": {
-                    "value": "[parameters('idempotencyTtlSeconds')]"
+                  "maxRequestBodyBytes": {
+                    "value": "[parameters('maxRequestBodyBytes')]"
                   },
                   "tags": {
                     "value": "[variables('tags')]"
@@ -1117,8 +1150,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.41.2.15936",
-                      "templateHash": "12908304207149199136"
+                      "version": "0.46.1.21595",
+                      "templateHash": "4653078235607065298"
                     }
                   },
                   "parameters": {
@@ -1152,6 +1185,25 @@
                     "appInsightsKey": {
                       "type": "securestring"
                     },
+                    "logAnalyticsWorkspaceId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Resource ID of the Log Analytics workspace that receives APIM platform logs (GatewayLogs)."
+                      }
+                    },
+                    "keyVaultName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Key Vault name that stores the APIM \"function-app\" subscription primary key. The vault must already exist and the deployer must have Key Vault Secrets Officer (or RBAC equivalent) at deployment time."
+                      }
+                    },
+                    "apimSubscriptionKeySecretName": {
+                      "type": "string",
+                      "defaultValue": "apim-subscription-function-app-key",
+                      "metadata": {
+                        "description": "Name of the KV secret that will hold the APIM function-app subscription primary key."
+                      }
+                    },
                     "useExternalCache": {
                       "type": "bool"
                     },
@@ -1161,20 +1213,23 @@
                     "redisConnectionString": {
                       "type": "securestring"
                     },
-                    "idempotencyTtlSeconds": {
-                      "type": "int"
+                    "maxRequestBodyBytes": {
+                      "type": "int",
+                      "metadata": {
+                        "description": "Maximum request body size in bytes. Surfaced as APIM named value {{max-request-body-bytes}} and enforced by the api-base.xml policy (returns 413 PayloadTooLarge before the call reaches Content Safety). Defense-in-depth: the Function App enforces the same cap on inbound bodies via MAX_REQUEST_BODY_BYTES."
+                      }
                     },
                     "tags": {
                       "type": "object"
                     }
                   },
                   "variables": {
-                    "$fxv#0": "<!--\r\n  API-level base policy.\r\n  - Sets the round-robin pool as the default backend.\r\n  - Authenticates upstream with APIM's managed identity (Cognitive Services\r\n    audience).\r\n  - Retries on 429/5xx three times with exponential-ish backoff.\r\n  - Echoes a correlation id (W3C traceparent or x-ms-client-request-id) on\r\n    every response.\r\n\r\n  __POOL_BACKEND_ID__ is replaced at deploy time by apim.bicep with the actual\r\n  pool backend name (currently \"cs-pool\").\r\n-->\r\n<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service backend-id=\"__POOL_BACKEND_ID__\" />\r\n    <authentication-managed-identity resource=\"https://cognitiveservices.azure.com\" />\r\n    <set-header name=\"x-correlation-id\" exists-action=\"skip\">\r\n      <value>@(context.RequestId.ToString())</value>\r\n    </set-header>\r\n  </inbound>\r\n  <backend>\r\n    <retry condition=\"@(context.Response.StatusCode == 429 || (context.Response.StatusCode >= 500 &amp;&amp; context.Response.StatusCode &lt; 600))\"\r\n           count=\"3\"\r\n           interval=\"1\"\r\n           max-interval=\"10\"\r\n           delta=\"2\"\r\n           first-fast-retry=\"false\">\r\n      <forward-request buffer-request-body=\"true\" />\r\n    </retry>\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n    <set-header name=\"x-correlation-id\" exists-action=\"override\">\r\n      <value>@(context.RequestId.ToString())</value>\r\n    </set-header>\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>\r\n",
+                    "$fxv#0": "<!--\n  API-level base policy.\n  - Sets the round-robin pool as the default backend.\n  - Authenticates upstream with APIM's managed identity (Cognitive Services\n    audience).\n  - Throttles per subscription (rate-limit: short burst window;\n    quota: 24h ceiling). Counter keys fall back to the gateway IP for unauthenticated\n    requests; in practice every authenticated caller has a subscription, but the\n    fallback prevents a NullReferenceException if the API is ever opened anonymously.\n  - Owns the retry budget: only GET/HEAD/OPTIONS, at most four attempts.\n    Mutations and analysis POSTs are forwarded once, even on ambiguous errors.\n  - Echoes a correlation id (W3C traceparent or x-ms-client-request-id) on\n    every response.\n\n  __POOL_BACKEND_ID__ is replaced at deploy time by apim.bicep with the actual\n  pool backend name (currently \"cs-pool\").\n-->\n<policies>\n  <inbound>\n    <base />\n    <!-- Durable idempotency is implemented at the Function ingress, not here. -->\n    <choose>\n      <when condition='@(context.Request.Headers.ContainsKey(\"Idempotency-Key\"))'>\n        <return-response>\n          <set-status code=\"400\" reason=\"IdempotencyRequiresFunction\" />\n          <set-header name=\"Content-Type\" exists-action=\"override\">\n            <value>application/json</value>\n          </set-header>\n          <set-body>{\"code\":\"IdempotencyRequiresFunction\",\"message\":\"Use the Function endpoint for durable idempotent mutations.\"}</set-body>\n        </return-response>\n      </when>\n    </choose>\n    <!--\n      Reject oversized request bodies at the gateway, BEFORE rate-limit/quota\n      counters tick and before the call reaches Content Safety. The\n      {{max-request-body-bytes}} named value is substituted as a literal int at\n      policy parse time, so this is a pure header-read + constant-compare with\n      no Razor evaluation cost. Defense-in-depth: the Function App also caps\n      inbound bodies at MAX_REQUEST_BODY_BYTES; this layer protects against\n      any future caller that bypasses the function and hits APIM directly.\n      check-body-size is intentionally NOT used: validate-content's max-size\n      is hard-capped at 4 MB, but our default is 10 MiB.\n    -->\n    <choose>\n      <when condition=\"@(int.Parse(context.Request.Headers.GetValueOrDefault(&quot;Content-Length&quot;, &quot;0&quot;)) > {{max-request-body-bytes}})\">\n        <return-response>\n          <set-status code=\"413\" reason=\"PayloadTooLarge\" />\n          <set-header name=\"Content-Type\" exists-action=\"override\">\n            <value>application/json</value>\n          </set-header>\n          <set-body>{\"code\":\"PayloadTooLarge\",\"message\":\"Request body exceeds the {{max-request-body-bytes}}-byte limit.\"}</set-body>\n        </return-response>\n      </when>\n    </choose>\n    <!--\n      Throttle per APIM subscription. The retry-after value (seconds) is echoed\n      via a 429 response by APIM. Numbers tuned for a thin proxy in front of\n      Content Safety: 60 req/min burst, 10000 req/day ceiling.\n    -->\n    <rate-limit-by-key calls=\"60\"\n                       renewal-period=\"60\"\n                       counter-key=\"@(context.Subscription?.Id ?? context.Request.IpAddress)\" />\n    <quota-by-key calls=\"10000\"\n                  renewal-period=\"86400\"\n                  counter-key=\"@(context.Subscription?.Id ?? context.Request.IpAddress)\" />\n    <set-backend-service backend-id=\"__POOL_BACKEND_ID__\" />\n    <authentication-managed-identity resource=\"https://cognitiveservices.azure.com\" />\n    <set-header name=\"x-correlation-id\" exists-action=\"skip\">\n      <value>@(context.RequestId.ToString())</value>\n    </set-header>\n  </inbound>\n  <backend>\n    <retry condition='@((context.Request.Method == \"GET\" || context.Request.Method == \"HEAD\" || context.Request.Method == \"OPTIONS\") &amp;&amp; context.Response != null &amp;&amp; (context.Response.StatusCode == 429 || (context.Response.StatusCode >= 500 &amp;&amp; context.Response.StatusCode &lt; 600)))'\n           count=\"3\"\n           interval=\"1\"\n           max-interval=\"5\"\n           delta=\"2\"\n           first-fast-retry=\"false\">\n      <!-- At most 4 x 10 s + 3 x 5 s for reads; one 50 s attempt for writes. -->\n      <forward-request buffer-request-body=\"true\"\n                       timeout='@((context.Request.Method == \"GET\" || context.Request.Method == \"HEAD\" || context.Request.Method == \"OPTIONS\") ? 10 : 50)' />\n    </retry>\n  </backend>\n  <outbound>\n    <base />\n    <set-header name=\"x-correlation-id\" exists-action=\"override\">\n      <value>@(context.RequestId.ToString())</value>\n    </set-header>\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n",
                     "primaryBackendUrl": "[format('{0}{1}contentsafety', parameters('primaryContentSafetyEndpoint'), if(endsWith(parameters('primaryContentSafetyEndpoint'), '/'), '', '/'))]",
                     "secondaryBackendUrl": "[format('{0}{1}contentsafety', parameters('secondaryContentSafetyEndpoint'), if(endsWith(parameters('secondaryContentSafetyEndpoint'), '/'), '', '/'))]",
-                    "statelessPolicy": "<!--\r\n  Stateless policy: pure round-robin via the pool. No pinning, no idempotency.\r\n  Used for:\r\n    - POST /text:analyze\r\n    - POST /image:analyze\r\n    - POST /text:detectGroundedness\r\n    - POST /text:detectProtectedMaterial\r\n    - POST /text:shieldPrompt\r\n    - GET  /text/blocklists  (list — see README \"Notes & limitations\")\r\n-->\r\n<policies>\r\n  <inbound>\r\n    <base />\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>\r\n",
-                    "pinReadPolicy": "<!--\r\n  Blocklist pin-read policy.\r\n  Used for:\r\n    - GET    /text/blocklists/{blocklistName}\r\n    - DELETE /text/blocklists/{blocklistName}\r\n    - GET    /text/blocklists/{blocklistName}/blocklistItems\r\n    - GET    /text/blocklists/{blocklistName}/blocklistItems/{blocklistItemId}\r\n\r\n  Looks up cs-blocklist-{name} -> backend-id (cs-primary or cs-secondary) and\r\n  routes the call to the pinned backend. Falls back to the round-robin pool\r\n  on cache miss (the requested blocklist may live on either account, and the\r\n  caller will get a clean 404 from whichever it lands on if the pin is gone).\r\n-->\r\n<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-variable name=\"blocklistName\" value=\"@((string)context.Request.MatchedParameters[\"blocklistName\"])\" />\r\n    <cache-lookup-value\r\n      key=\"@(\"cs-blocklist-\" + (string)context.Variables[\"blocklistName\"])\"\r\n      variable-name=\"pinnedBackendId\"\r\n      caching-type=\"prefer-external\" />\r\n    <choose>\r\n      <when condition=\"@(context.Variables.ContainsKey(\"pinnedBackendId\") &amp;&amp; !string.IsNullOrEmpty((string)context.Variables[\"pinnedBackendId\"]))\">\r\n        <set-backend-service backend-id=\"@((string)context.Variables[\"pinnedBackendId\"])\" />\r\n        <trace source=\"cs-pin\" severity=\"information\">\r\n          <message>@($\"Pinned blocklist '{(string)context.Variables[\"blocklistName\"]}' to backend '{(string)context.Variables[\"pinnedBackendId\"]}'\")</message>\r\n        </trace>\r\n      </when>\r\n      <otherwise>\r\n        <trace source=\"cs-pin\" severity=\"error\">\r\n          <message>@($\"Pin cache miss for blocklist '{(string)context.Variables[\"blocklistName\"]}' — falling back to pool. A subsequent 404 is expected if the blocklist lives on the other backend.\")</message>\r\n        </trace>\r\n      </otherwise>\r\n    </choose>\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>\r\n",
-                    "pinWriteIdempotentPolicy": "<!--\r\n  Blocklist mutation policy with idempotency guard + pin write.\r\n\r\n  Used for:\r\n    - PATCH /text/blocklists/{blocklistName}\r\n    - POST  /text/blocklists/{blocklistName}:addOrUpdateBlocklistItems\r\n    - POST  /text/blocklists/{blocklistName}:removeBlocklistItems\r\n\r\n  Idempotency contract (matches the Stripe / IETF Idempotency-Key draft):\r\n    1. If Idempotency-Key is absent       -> proceed normally (no caching).\r\n    2. Key shape: 1-128 chars, ^[A-Za-z0-9._-]+$. Otherwise 400.\r\n    3. SHA-256(request body) is the fingerprint.\r\n    4. If cs-idem-hash-{key} hits and matches  -> return cached body + Location\r\n       with X-Idempotent-Replay: true.\r\n    5. If hash hits but mismatches             -> 422 IdempotencyKeyConflict.\r\n    6. If a sentinel cs-idem-lock-{key}=InProgress exists -> 409 +\r\n       Retry-After: 5.\r\n    7. Else write the InProgress sentinel (TTL 300 s) and forward upstream.\r\n       On 2xx: store body, hash, location, then set the cs-blocklist-{name}\r\n       pin. The hash is written LAST so a hash hit guarantees body presence.\r\n\r\n  TTL for cs-idem-* entries comes from named value {{idempotency-ttl-seconds}};\r\n  APIM substitutes the literal int at policy parse time.\r\n-->\r\n<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-variable name=\"blocklistName\" value=\"@((string)context.Request.MatchedParameters[\"blocklistName\"])\" />\r\n    <set-variable name=\"idemKey\" value=\"@(context.Request.Headers.GetValueOrDefault(\"Idempotency-Key\",\"\"))\" />\r\n    <choose>\r\n      <when condition=\"@(!string.IsNullOrEmpty((string)context.Variables[\"idemKey\"]))\">\r\n        <!-- Validate key shape -->\r\n        <choose>\r\n          <when condition=\"@{\r\n            var k = (string)context.Variables[\"idemKey\"];\r\n            if (k.Length &lt; 1 || k.Length &gt; 128) { return true; }\r\n            foreach (var c in k) {\r\n              if (!(char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-')) { return true; }\r\n            }\r\n            return false;\r\n          }\">\r\n            <return-response>\r\n              <set-status code=\"400\" reason=\"InvalidIdempotencyKey\" />\r\n              <set-header name=\"Content-Type\" exists-action=\"override\">\r\n                <value>application/json</value>\r\n              </set-header>\r\n              <set-body>{\"code\":\"InvalidIdempotencyKey\",\"message\":\"Idempotency-Key must match ^[A-Za-z0-9._-]{1,128}$\"}</set-body>\r\n            </return-response>\r\n          </when>\r\n        </choose>\r\n\r\n        <!-- Compute SHA-256 of body for fingerprinting -->\r\n        <set-variable name=\"bodyBytes\" value=\"@(context.Request.Body.As&lt;byte[]&gt;(preserveContent: true))\" />\r\n        <set-variable name=\"bodyHash\" value=\"@{\r\n          var bytes = (byte[])context.Variables[\"bodyBytes\"];\r\n          var sha = System.Security.Cryptography.SHA256.Create();\r\n          var h = sha.ComputeHash(bytes);\r\n          var sb = new System.Text.StringBuilder();\r\n          foreach (var b in h) { sb.Append(b.ToString(\"x2\")); }\r\n          return sb.ToString();\r\n        }\" />\r\n\r\n        <!-- Look up existing hash -->\r\n        <cache-lookup-value\r\n          key=\"@(\"cs-idem-hash-\" + (string)context.Variables[\"idemKey\"])\"\r\n          variable-name=\"cachedHash\"\r\n          caching-type=\"prefer-external\" />\r\n        <choose>\r\n          <when condition=\"@(context.Variables.ContainsKey(\"cachedHash\") &amp;&amp; !string.IsNullOrEmpty((string)context.Variables[\"cachedHash\"]))\">\r\n            <choose>\r\n              <when condition=\"@((string)context.Variables[\"cachedHash\"] == (string)context.Variables[\"bodyHash\"])\">\r\n                <!-- Replay -->\r\n                <cache-lookup-value\r\n                  key=\"@(\"cs-idem-\" + (string)context.Variables[\"idemKey\"])\"\r\n                  variable-name=\"cachedBody\"\r\n                  caching-type=\"prefer-external\" />\r\n                <cache-lookup-value\r\n                  key=\"@(\"cs-idem-loc-\" + (string)context.Variables[\"idemKey\"])\"\r\n                  variable-name=\"cachedLocation\"\r\n                  caching-type=\"prefer-external\" />\r\n                <return-response>\r\n                  <set-status code=\"201\" reason=\"Created (replayed)\" />\r\n                  <set-header name=\"Content-Type\" exists-action=\"override\">\r\n                    <value>application/json</value>\r\n                  </set-header>\r\n                  <set-header name=\"X-Idempotent-Replay\" exists-action=\"override\">\r\n                    <value>true</value>\r\n                  </set-header>\r\n                  <set-header name=\"Location\" exists-action=\"override\">\r\n                    <value>@((string)context.Variables.GetValueOrDefault(\"cachedLocation\",\"\"))</value>\r\n                  </set-header>\r\n                  <set-body>@((string)context.Variables.GetValueOrDefault(\"cachedBody\",\"\"))</set-body>\r\n                </return-response>\r\n              </when>\r\n              <otherwise>\r\n                <return-response>\r\n                  <set-status code=\"422\" reason=\"IdempotencyKeyConflict\" />\r\n                  <set-header name=\"Content-Type\" exists-action=\"override\">\r\n                    <value>application/json</value>\r\n                  </set-header>\r\n                  <set-body>{\"code\":\"IdempotencyKeyConflict\",\"message\":\"Same Idempotency-Key seen with a different request body\"}</set-body>\r\n                </return-response>\r\n              </otherwise>\r\n            </choose>\r\n          </when>\r\n        </choose>\r\n\r\n        <!-- Check in-flight sentinel -->\r\n        <cache-lookup-value\r\n          key=\"@(\"cs-idem-lock-\" + (string)context.Variables[\"idemKey\"])\"\r\n          variable-name=\"lockState\"\r\n          caching-type=\"prefer-external\" />\r\n        <choose>\r\n          <when condition=\"@(context.Variables.ContainsKey(\"lockState\") &amp;&amp; (string)context.Variables[\"lockState\"] == \"InProgress\")\">\r\n            <return-response>\r\n              <set-status code=\"409\" reason=\"IdempotencyInFlight\" />\r\n              <set-header name=\"Retry-After\" exists-action=\"override\">\r\n                <value>5</value>\r\n              </set-header>\r\n              <set-header name=\"Content-Type\" exists-action=\"override\">\r\n                <value>application/json</value>\r\n              </set-header>\r\n              <set-body>{\"code\":\"IdempotencyInFlight\",\"message\":\"A request with the same Idempotency-Key is in flight; retry per Retry-After.\"}</set-body>\r\n            </return-response>\r\n          </when>\r\n        </choose>\r\n\r\n        <!-- Write the in-flight sentinel (best-effort, no atomic CAS) -->\r\n        <cache-store-value\r\n          key=\"@(\"cs-idem-lock-\" + (string)context.Variables[\"idemKey\"])\"\r\n          value=\"InProgress\"\r\n          duration=\"300\"\r\n          caching-type=\"prefer-external\" />\r\n      </when>\r\n    </choose>\r\n\r\n    <!-- Pin lookup (existing pin overrides pool) -->\r\n    <cache-lookup-value\r\n      key=\"@(\"cs-blocklist-\" + (string)context.Variables[\"blocklistName\"])\"\r\n      variable-name=\"pinnedBackendId\"\r\n      caching-type=\"prefer-external\" />\r\n    <choose>\r\n      <when condition=\"@(context.Variables.ContainsKey(\"pinnedBackendId\") &amp;&amp; !string.IsNullOrEmpty((string)context.Variables[\"pinnedBackendId\"]))\">\r\n        <set-backend-service backend-id=\"@((string)context.Variables[\"pinnedBackendId\"])\" />\r\n      </when>\r\n    </choose>\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n    <choose>\r\n      <when condition=\"@(context.Response.StatusCode &gt;= 200 &amp;&amp; context.Response.StatusCode &lt; 300)\">\r\n        <!-- Resolve which backend served the response -->\r\n        <set-variable name=\"resolvedBackendId\" value=\"@{\r\n          var url = context.Request.Url.ToString();\r\n          if (url.Contains(\"-pri.cognitiveservices\")) { return \"cs-primary\"; }\r\n          if (url.Contains(\"-sec.cognitiveservices\")) { return \"cs-secondary\"; }\r\n          return \"\";\r\n        }\" />\r\n        <choose>\r\n          <when condition=\"@(!string.IsNullOrEmpty((string)context.Variables[\"resolvedBackendId\"]))\">\r\n            <cache-store-value\r\n              key=\"@(\"cs-blocklist-\" + (string)context.Variables[\"blocklistName\"])\"\r\n              value=\"@((string)context.Variables[\"resolvedBackendId\"])\"\r\n              duration=\"86400\"\r\n              caching-type=\"prefer-external\" />\r\n          </when>\r\n        </choose>\r\n\r\n        <!-- Idempotency post-write -->\r\n        <choose>\r\n          <when condition=\"@(!string.IsNullOrEmpty((string)context.Variables.GetValueOrDefault(\"idemKey\",\"\")))\">\r\n            <set-variable name=\"responseBody\" value=\"@(context.Response.Body.As&lt;string&gt;(preserveContent: true))\" />\r\n            <set-variable name=\"locationHdr\" value=\"@(context.Response.Headers.GetValueOrDefault(\"Location\",\"\"))\" />\r\n            <cache-store-value\r\n              key=\"@(\"cs-idem-\" + (string)context.Variables[\"idemKey\"])\"\r\n              value=\"@((string)context.Variables[\"responseBody\"])\"\r\n              duration=\"{{idempotency-ttl-seconds}}\"\r\n              caching-type=\"prefer-external\" />\r\n            <cache-store-value\r\n              key=\"@(\"cs-idem-loc-\" + (string)context.Variables[\"idemKey\"])\"\r\n              value=\"@((string)context.Variables[\"locationHdr\"])\"\r\n              duration=\"{{idempotency-ttl-seconds}}\"\r\n              caching-type=\"prefer-external\" />\r\n            <!-- Hash MUST be stored LAST so a hash hit guarantees body presence -->\r\n            <cache-store-value\r\n              key=\"@(\"cs-idem-hash-\" + (string)context.Variables[\"idemKey\"])\"\r\n              value=\"@((string)context.Variables.GetValueOrDefault(\"bodyHash\",\"\"))\"\r\n              duration=\"{{idempotency-ttl-seconds}}\"\r\n              caching-type=\"prefer-external\" />\r\n          </when>\r\n        </choose>\r\n      </when>\r\n    </choose>\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>\r\n"
+                    "statelessPolicy": "<!--\n  Stateless policy: round-robin via the pool. No ownership or idempotency state.\n  Used for:\n    - POST /image:analyze\n    - POST /text:detectGroundedness\n    - POST /text:detectProtectedMaterial\n    - POST /text:shieldPrompt\n    - GET  /text/blocklists  (list — see README \"Notes & limitations\")\n-->\n<policies>\n  <inbound>\n    <base />\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n",
+                    "blocklistPolicy": "<!--\n  Stable ownership: SHA-256(UTF-8 blocklistName), first byte modulo two.\n  Never fall back to the pool: a missing or unavailable owner is not evidence\n  that the other account has the same data. Existing lists must be migrated\n  to their deterministic owner before enabling this policy.\n-->\n<policies>\n  <inbound>\n    <base />\n    <set-variable name=\"blocklistBackend\" value='@{\n      var name = (string)context.Request.MatchedParameters[\"blocklistName\"];\n      var hash = System.Security.Cryptography.SHA256.Create().ComputeHash(System.Text.Encoding.UTF8.GetBytes(name));\n      return hash[0] % 2 == 0 ? \"cs-primary\" : \"cs-secondary\";\n    }' />\n    <set-backend-service backend-id='@((string)context.Variables[\"blocklistBackend\"])' />\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n",
+                    "analyzeTextPolicy": "<!-- Text analysis using blocklists must run on the account owning those lists. -->\n<policies>\n  <inbound>\n    <base />\n    <set-variable name=\"blocklistBackend\" value='@{\n      try {\n        var body = context.Request.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);\n        var names = body[\"blocklistNames\"];\n        if (names == null || names.Type == Newtonsoft.Json.Linq.JTokenType.Null) { return \"\"; }\n        if (names.Type != Newtonsoft.Json.Linq.JTokenType.Array) { return \"invalid\"; }\n        var owner = \"\";\n        foreach (var name in (Newtonsoft.Json.Linq.JArray)names) {\n          if (name.Type != Newtonsoft.Json.Linq.JTokenType.String) { return \"invalid\"; }\n          var hash = System.Security.Cryptography.SHA256.Create().ComputeHash(System.Text.Encoding.UTF8.GetBytes((string)name));\n          var backend = hash[0] % 2 == 0 ? \"cs-primary\" : \"cs-secondary\";\n          if (owner != \"\" &amp;&amp; owner != backend) { return \"mixed\"; }\n          owner = backend;\n        }\n        return owner;\n      } catch {\n        return \"invalid\";\n      }\n    }' />\n    <choose>\n      <when condition='@((string)context.Variables[\"blocklistBackend\"] == \"mixed\" || (string)context.Variables[\"blocklistBackend\"] == \"invalid\")'>\n        <return-response>\n          <set-status code=\"400\" reason=\"InvalidBlocklistRouting\" />\n          <set-header name=\"Content-Type\" exists-action=\"override\">\n            <value>application/json</value>\n          </set-header>\n          <set-body>{\"code\":\"InvalidBlocklistRouting\",\"message\":\"Provide valid JSON and blocklistNames belonging to one backend. Split analyses across owners explicitly.\"}</set-body>\n        </return-response>\n      </when>\n      <when condition='@(!string.IsNullOrEmpty((string)context.Variables[\"blocklistBackend\"]))'>\n        <set-backend-service backend-id='@((string)context.Variables[\"blocklistBackend\"])' />\n      </when>\n    </choose>\n  </inbound>\n  <backend>\n    <base />\n  </backend>\n  <outbound>\n    <base />\n  </outbound>\n  <on-error>\n    <base />\n  </on-error>\n</policies>\n"
                   },
                   "resources": [
                     {
@@ -1237,7 +1292,7 @@
                       "apiVersion": "2024-05-01",
                       "name": "[format('{0}/{1}', parameters('apimName'), 'default')]",
                       "properties": {
-                        "description": "AMR external cache (blocklist pinning + idempotency)",
+                        "description": "Optional cache for custom policies; not used for ownership or idempotency",
                         "connectionString": "[parameters('redisConnectionString')]",
                         "useFromLocation": "[parameters('location')]",
                         "resourceId": "[parameters('redisConnectionStringSecretUri')]"
@@ -1249,10 +1304,10 @@
                     {
                       "type": "Microsoft.ApiManagement/service/namedValues",
                       "apiVersion": "2024-05-01",
-                      "name": "[format('{0}/{1}', parameters('apimName'), 'idempotency-ttl-seconds')]",
+                      "name": "[format('{0}/{1}', parameters('apimName'), 'max-request-body-bytes')]",
                       "properties": {
-                        "displayName": "idempotency-ttl-seconds",
-                        "value": "[string(parameters('idempotencyTtlSeconds'))]",
+                        "displayName": "max-request-body-bytes",
+                        "value": "[string(parameters('maxRequestBodyBytes'))]",
                         "secret": false
                       },
                       "dependsOn": [
@@ -1393,6 +1448,18 @@
                       ]
                     },
                     {
+                      "type": "Microsoft.KeyVault/vaults/secrets",
+                      "apiVersion": "2024-04-01-preview",
+                      "name": "[format('{0}/{1}', parameters('keyVaultName'), parameters('apimSubscriptionKeySecretName'))]",
+                      "properties": {
+                        "value": "[listSecrets(resourceId('Microsoft.ApiManagement/service/subscriptions', parameters('apimName'), 'function-app'), '2024-05-01').primaryKey]",
+                        "contentType": "text/plain"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service/subscriptions', parameters('apimName'), 'function-app')]"
+                      ]
+                    },
+                    {
                       "type": "Microsoft.ApiManagement/service/apis/policies",
                       "apiVersion": "2024-05-01",
                       "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'content-safety', 'policy')]",
@@ -1402,6 +1469,7 @@
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'content-safety')]",
+                        "[resourceId('Microsoft.ApiManagement/service/namedValues', parameters('apimName'), 'max-request-body-bytes')]",
                         "[resourceId('Microsoft.ApiManagement/service/backends', parameters('apimName'), 'cs-pool')]"
                       ]
                     },
@@ -1634,7 +1702,7 @@
                       "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'analyze-text', 'policy')]",
                       "properties": {
                         "format": "rawxml",
-                        "value": "[variables('statelessPolicy')]"
+                        "value": "[variables('analyzeTextPolicy')]"
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
@@ -1712,11 +1780,10 @@
                       "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'upsert-blocklist', 'policy')]",
                       "properties": {
                         "format": "rawxml",
-                        "value": "[variables('pinWriteIdempotentPolicy')]"
+                        "value": "[variables('blocklistPolicy')]"
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
-                        "[resourceId('Microsoft.ApiManagement/service/namedValues', parameters('apimName'), 'idempotency-ttl-seconds')]",
                         "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'upsert-blocklist')]"
                       ]
                     },
@@ -1726,11 +1793,10 @@
                       "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'add-blocklist-items', 'policy')]",
                       "properties": {
                         "format": "rawxml",
-                        "value": "[variables('pinWriteIdempotentPolicy')]"
+                        "value": "[variables('blocklistPolicy')]"
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
-                        "[resourceId('Microsoft.ApiManagement/service/namedValues', parameters('apimName'), 'idempotency-ttl-seconds')]",
                         "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'add-blocklist-items')]"
                       ]
                     },
@@ -1740,11 +1806,10 @@
                       "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'remove-blocklist-items', 'policy')]",
                       "properties": {
                         "format": "rawxml",
-                        "value": "[variables('pinWriteIdempotentPolicy')]"
+                        "value": "[variables('blocklistPolicy')]"
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
-                        "[resourceId('Microsoft.ApiManagement/service/namedValues', parameters('apimName'), 'idempotency-ttl-seconds')]",
                         "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'remove-blocklist-items')]"
                       ]
                     },
@@ -1754,7 +1819,7 @@
                       "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'get-blocklist', 'policy')]",
                       "properties": {
                         "format": "rawxml",
-                        "value": "[variables('pinReadPolicy')]"
+                        "value": "[variables('blocklistPolicy')]"
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
@@ -1767,7 +1832,7 @@
                       "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'delete-blocklist', 'policy')]",
                       "properties": {
                         "format": "rawxml",
-                        "value": "[variables('pinReadPolicy')]"
+                        "value": "[variables('blocklistPolicy')]"
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
@@ -1780,7 +1845,7 @@
                       "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'list-blocklist-items', 'policy')]",
                       "properties": {
                         "format": "rawxml",
-                        "value": "[variables('pinReadPolicy')]"
+                        "value": "[variables('blocklistPolicy')]"
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
@@ -1793,11 +1858,39 @@
                       "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'content-safety', 'get-blocklist-item', 'policy')]",
                       "properties": {
                         "format": "rawxml",
-                        "value": "[variables('pinReadPolicy')]"
+                        "value": "[variables('blocklistPolicy')]"
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.ApiManagement/service/apis/policies', parameters('apimName'), 'content-safety', 'policy')]",
                         "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'content-safety', 'get-blocklist-item')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Insights/diagnosticSettings",
+                      "apiVersion": "2021-05-01-preview",
+                      "scope": "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]",
+                      "name": "apim-to-log-analytics",
+                      "properties": {
+                        "workspaceId": "[parameters('logAnalyticsWorkspaceId')]",
+                        "logs": [
+                          {
+                            "category": "GatewayLogs",
+                            "enabled": true
+                          },
+                          {
+                            "category": "WebSocketConnectionLogs",
+                            "enabled": true
+                          }
+                        ],
+                        "metrics": [
+                          {
+                            "category": "AllMetrics",
+                            "enabled": true
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
                       ]
                     }
                   ],
@@ -1821,11 +1914,16 @@
                     "functionSubscriptionName": {
                       "type": "string",
                       "value": "function-app"
+                    },
+                    "apimSubscriptionKeySecretUri": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.KeyVault/vaults/secrets', parameters('keyVaultName'), parameters('apimSubscriptionKeySecretName')), '2024-04-01-preview').secretUri]"
                     }
                   }
                 }
               },
               "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'keyvault')]",
                 "[resourceId('Microsoft.Resources/deployments', 'monitoring')]",
                 "[resourceId('Microsoft.Resources/deployments', 'cs-primary')]",
                 "[resourceId('Microsoft.Resources/deployments', 'redis')]",
@@ -1854,14 +1952,17 @@
                   "storageAccountName": {
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.name.value]"
                   },
-                  "apimName": {
-                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.name.value]"
-                  },
                   "apimGatewayUrl": {
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.gatewayUrl.value]"
                   },
-                  "apimSubscriptionName": {
-                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.functionSubscriptionName.value]"
+                  "idempotencyContainerName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.idempotencyContainerName.value]"
+                  },
+                  "idempotencyTtlSeconds": {
+                    "value": "[parameters('idempotencyTtlSeconds')]"
+                  },
+                  "apimSubscriptionKeySecretUri": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.apimSubscriptionKeySecretUri.value]"
                   },
                   "virtualNetworkSubnetId": {
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.functionsSubnetId.value]"
@@ -1869,8 +1970,11 @@
                   "storageBlobPrivateEndpointId": {
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.blobPrivateEndpointId.value]"
                   },
+                  "logAnalyticsWorkspaceId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.workspaceId.value]"
+                  },
                   "corsAllowedOrigins": {
-                    "value": "[parameters('corsAllowedOrigins')]"
+                    "value": "[variables('effectiveCorsAllowedOrigins')]"
                   },
                   "maxRequestBodyBytes": {
                     "value": "[parameters('maxRequestBodyBytes')]"
@@ -1888,8 +1992,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.41.2.15936",
-                      "templateHash": "15927981697456134766"
+                      "version": "0.46.1.21595",
+                      "templateHash": "7520517815768846652"
                     }
                   },
                   "parameters": {
@@ -1905,14 +2009,23 @@
                     "storageAccountName": {
                       "type": "string"
                     },
-                    "apimName": {
+                    "idempotencyContainerName": {
                       "type": "string"
+                    },
+                    "idempotencyTtlSeconds": {
+                      "type": "int",
+                      "defaultValue": 3600,
+                      "minValue": 60,
+                      "maxValue": 604800
                     },
                     "apimGatewayUrl": {
                       "type": "string"
                     },
-                    "apimSubscriptionName": {
-                      "type": "string"
+                    "apimSubscriptionKeySecretUri": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Key Vault secret URI for the APIM subscription primary key. Surfaced as APIM_SUBSCRIPTION_KEY via @Microsoft.KeyVault(SecretUri=...) so the literal value never enters appSettings or deployment history."
+                      }
                     },
                     "virtualNetworkSubnetId": {
                       "type": "string",
@@ -1924,6 +2037,12 @@
                       "type": "string",
                       "metadata": {
                         "description": "Resource ID of the storage blob private endpoint. Only used to force the function module to wait for the PE to finish provisioning before the platform restarts the app."
+                      }
+                    },
+                    "logAnalyticsWorkspaceId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Resource ID of the Log Analytics workspace that receives FunctionApp diagnostic logs."
                       }
                     },
                     "corsAllowedOrigins": {
@@ -1994,6 +2113,18 @@
                               "value": "[parameters('storageAccountName')]"
                             },
                             {
+                              "name": "IDEMPOTENCY_BLOB_ENDPOINT",
+                              "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2024-01-01').primaryEndpoints.blob]"
+                            },
+                            {
+                              "name": "IDEMPOTENCY_CONTAINER",
+                              "value": "[parameters('idempotencyContainerName')]"
+                            },
+                            {
+                              "name": "IDEMPOTENCY_TTL_SECONDS",
+                              "value": "[string(parameters('idempotencyTtlSeconds'))]"
+                            },
+                            {
                               "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
                               "value": "[parameters('appInsightsConnectionString')]"
                             },
@@ -2003,7 +2134,7 @@
                             },
                             {
                               "name": "APIM_SUBSCRIPTION_KEY",
-                              "value": "[listSecrets(resourceId('Microsoft.ApiManagement/service/subscriptions', parameters('apimName'), parameters('apimSubscriptionName')), '2024-05-01').primaryKey]"
+                              "value": "[format('@Microsoft.KeyVault(SecretUri={0})', parameters('apimSubscriptionKeySecretUri'))]"
                             },
                             {
                               "name": "MAX_REQUEST_BODY_BYTES",
@@ -2045,6 +2176,30 @@
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Insights/diagnosticSettings",
+                      "apiVersion": "2021-05-01-preview",
+                      "scope": "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]",
+                      "name": "function-to-log-analytics",
+                      "properties": {
+                        "workspaceId": "[parameters('logAnalyticsWorkspaceId')]",
+                        "logs": [
+                          {
+                            "category": "FunctionAppLogs",
+                            "enabled": true
+                          }
+                        ],
+                        "metrics": [
+                          {
+                            "category": "AllMetrics",
+                            "enabled": true
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]"
                       ]
                     }
                   ],
@@ -2100,9 +2255,8 @@
                   "storageAccountName": {
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.name.value]"
                   },
-                  "keyVaultName": "[if(parameters('useExternalCache'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.name.value), createObject('value', ''))]",
-                  "useExternalCache": {
-                    "value": "[parameters('useExternalCache')]"
+                  "keyVaultName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.name.value]"
                   },
                   "principalId": {
                     "value": "[parameters('principalId')]"
@@ -2114,8 +2268,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.41.2.15936",
-                      "templateHash": "7861320557680922469"
+                      "version": "0.46.1.21595",
+                      "templateHash": "2585428830924301444"
                     }
                   },
                   "parameters": {
@@ -2136,9 +2290,6 @@
                     },
                     "keyVaultName": {
                       "type": "string"
-                    },
-                    "useExternalCache": {
-                      "type": "bool"
                     },
                     "principalId": {
                       "type": "string"
@@ -2232,7 +2383,18 @@
                       }
                     },
                     {
-                      "condition": "[and(parameters('useExternalCache'), not(empty(parameters('principalId'))))]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+                      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), parameters('functionPrincipalId'), variables('keyVaultSecretsUserRoleId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultSecretsUserRoleId'))]",
+                        "principalId": "[parameters('functionPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[not(empty(parameters('principalId')))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
                       "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
@@ -2269,6 +2431,14 @@
               "type": "string",
               "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.gatewayUrl.value]"
             },
+            "apimName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'apim'), '2025-04-01').outputs.name.value]"
+            },
+            "keyVaultName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.name.value]"
+            },
             "primaryContentSafetyName": {
               "type": "string",
               "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cs-primary'), '2025-04-01').outputs.name.value]"
@@ -2288,6 +2458,13 @@
             "vnetName": {
               "type": "string",
               "value": "[reference(resourceId('Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.vnetName.value]"
+            },
+            "corsWildcardSilentlyStripped": {
+              "type": "bool",
+              "metadata": {
+                "description": "True if AZURE_CORS_ALLOWED_ORIGINS contained the wildcard (\"*\") and it was silently stripped before reaching the Function App. Treat as a misconfiguration to fix at the caller."
+              },
+              "value": "[variables('corsHasWildcard')]"
             }
           }
         }
@@ -2317,6 +2494,14 @@
     "APIM_GATEWAY_URL": {
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'main-resources'), '2025-04-01').outputs.apimGatewayUrl.value]"
+    },
+    "APIM_SERVICE_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'main-resources'), '2025-04-01').outputs.apimName.value]"
+    },
+    "KEY_VAULT_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'main-resources'), '2025-04-01').outputs.keyVaultName.value]"
     },
     "PRIMARY_CONTENT_SAFETY_NAME": {
       "type": "string",
