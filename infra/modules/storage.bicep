@@ -55,6 +55,16 @@ resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/con
   }
 }
 
+// Never apply lifecycle deletion to this container. Pending/uncertain operations
+// have no safe automatic expiry; only the Function CAS-replaces completed records.
+resource idempotencyContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2024-01-01' = {
+  parent: blobServices
+  name: 'idempotency'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // Private endpoint for blob sub-resource. The FC1 worker pulls
 // released-package.zip via this PE; without it the function cannot start.
 resource blobPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
@@ -103,4 +113,5 @@ output id string = storageAccount.id
 output name string = storageAccount.name
 output blobEndpoint string = storageAccount.properties.primaryEndpoints.blob
 output deploymentContainerName string = deploymentContainer.name
+output idempotencyContainerName string = idempotencyContainer.name
 output blobPrivateEndpointId string = blobPrivateEndpoint.id

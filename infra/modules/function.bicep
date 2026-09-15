@@ -4,6 +4,10 @@ param location string
 param functionAppName string
 param appServicePlanName string
 param storageAccountName string
+param idempotencyContainerName string
+@minValue(60)
+@maxValue(604800)
+param idempotencyTtlSeconds int = 3600
 param apimGatewayUrl string
 @description('Key Vault secret URI for the APIM subscription primary key. Surfaced as APIM_SUBSCRIPTION_KEY via @Microsoft.KeyVault(SecretUri=...) so the literal value never enters appSettings or deployment history.')
 param apimSubscriptionKeySecretUri string
@@ -79,6 +83,18 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'AzureWebJobsStorage__accountName'
           value: storage.name
+        }
+        {
+          name: 'IDEMPOTENCY_BLOB_ENDPOINT'
+          value: storage.properties.primaryEndpoints.blob
+        }
+        {
+          name: 'IDEMPOTENCY_CONTAINER'
+          value: idempotencyContainerName
+        }
+        {
+          name: 'IDEMPOTENCY_TTL_SECONDS'
+          value: string(idempotencyTtlSeconds)
         }
         // Application Insights via instrumentation-key connection string
         // (default ingestion path). AAD-only ingestion is intentionally NOT

@@ -173,9 +173,9 @@ async def test_get_blocklist_item(apim_mock) -> None:
 
 
 @pytest.mark.asyncio
-async def test_idempotency_replay_passthrough(apim_mock) -> None:
-    """Ensure X-Idempotent-Replay is forwarded back to the client."""
-    apim_mock.patch(
+async def test_idempotency_replay_is_function_owned(apim_mock) -> None:
+    """Only an actual durable replay gets the replay marker."""
+    route = apim_mock.patch(
         "/contentsafety/text/blocklists/p",
         params={"api-version": "2024-09-01"},
     ).mock(
@@ -201,6 +201,10 @@ async def test_idempotency_replay_passthrough(apim_mock) -> None:
     )
     resp = await blocklist_by_name(req)
 
+    assert resp.status_code == 201
+    assert "x-idempotent-replay" not in resp.headers
+    resp = await blocklist_by_name(req)
+    assert route.call_count == 1
     assert resp.status_code == 201
     assert resp.headers.get("x-idempotent-replay") == "true"
     assert resp.headers.get("location") == "https://cs-pri/.../blocklists/p"
