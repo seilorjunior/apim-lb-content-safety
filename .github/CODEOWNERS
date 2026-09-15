@@ -1,0 +1,24 @@
+# CODEOWNERS for apim-lb-content-safety
+#
+# Lines are matched bottom-up. Last matching pattern wins.
+# Owners listed here are auto-requested as PR reviewers.
+
+# Default — repo owner reviews everything that isn't covered below.
+*                               @seilorjunior
+
+# Highest-blast-radius paths: infra, CI, and supply-chain config.
+/.github/                       @seilorjunior
+/.github/workflows/             @seilorjunior
+/.github/dependabot.yml         @seilorjunior
+/.github/CODEOWNERS             @seilorjunior
+/infra/                         @seilorjunior
+/infra/modules/policies/        @seilorjunior
+/azure.yaml                     @seilorjunior
+/scripts/                       @seilorjunior
+
+# Application code.
+/src/api/                       @seilorjunior
+
+# Security-sensitive docs.
+/SECURITY.md                    @seilorjunior
+/LICENSE                        @seilorjunior

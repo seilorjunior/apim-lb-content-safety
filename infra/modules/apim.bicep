@@ -16,11 +16,18 @@ param secondaryContentSafetyName string
 param appInsightsId string
 @secure()
 param appInsightsKey string
+@description('Resource ID of the Log Analytics workspace that receives APIM platform logs (GatewayLogs).')
+param logAnalyticsWorkspaceId string
+@description('Key Vault name that stores the APIM "function-app" subscription primary key. The vault must already exist and the deployer must have Key Vault Secrets Officer (or RBAC equivalent) at deployment time.')
+param keyVaultName string
+@description('Name of the KV secret that will hold the APIM function-app subscription primary key.')
+param apimSubscriptionKeySecretName string = 'apim-subscription-function-app-key'
 param useExternalCache bool
 param redisConnectionStringSecretUri string
 @secure()
 param redisConnectionString string
-param idempotencyTtlSeconds int
+@description('Maximum request body size in bytes. Surfaced as APIM named value {{max-request-body-bytes}} and enforced by the api-base.xml policy (returns 413 PayloadTooLarge before the call reaches Content Safety). Defense-in-depth: the Function App enforces the same cap on inbound bodies via MAX_REQUEST_BODY_BYTES.')
+param maxRequestBodyBytes int
 param tags object
 
 // =============================================================================
@@ -82,7 +89,7 @@ resource externalCache 'Microsoft.ApiManagement/service/caches@2024-05-01' = if 
   parent: apim
   name: 'default'
   properties: {
-    description: 'AMR external cache (blocklist pinning + idempotency)'
+    description: 'Optional cache for custom policies; not used for ownership or idempotency'
     connectionString: redisConnectionString
     useFromLocation: location
     resourceId: redisConnectionStringSecretUri
@@ -92,12 +99,15 @@ resource externalCache 'Microsoft.ApiManagement/service/caches@2024-05-01' = if 
 // =============================================================================
 // Named values (parsed at policy compile time, so they substitute as literals).
 // =============================================================================
-resource idempotencyTtlNv 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+// Substituted at policy parse time into the <check-body-size> block in
+// api-base.xml. Keeping it as a named value lets operators retune the cap
+// without redeploying the policy XML.
+resource maxBodyBytesNv 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
   parent: apim
-  name: 'idempotency-ttl-seconds'
+  name: 'max-request-body-bytes'
   properties: {
-    displayName: 'idempotency-ttl-seconds'
-    value: string(idempotencyTtlSeconds)
+    displayName: 'max-request-body-bytes'
+    value: string(maxRequestBodyBytes)
     secret: false
   }
 }
@@ -215,12 +225,49 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
     protocols: [
       'https'
     ]
-    subscriptionRequired: false
+    subscriptionRequired: true
     apiType: 'http'
   }
 }
 
+// Per-API subscription bound to the Function App. The function reads the primary
+// key at deployment time via listSecrets() and forwards it on every upstream call
+// as `Ocp-Apim-Subscription-Key`. Naming is stable so re-deploys re-use the same
+// key (no caller-side rotation needed).
+resource functionSubscription 'Microsoft.ApiManagement/service/subscriptions@2024-05-01' = {
+  parent: apim
+  name: 'function-app'
+  properties: {
+    displayName: 'Content Safety - Function App'
+    scope: api.id
+    state: 'active'
+    allowTracing: false
+  }
+}
+
+// =============================================================================
+// Persist the subscription primary key to Key Vault so the Function App can
+// reference it via `@Microsoft.KeyVault(SecretUri=...)` instead of receiving
+// the raw value in appSettings. listSecrets() is evaluated server-side by ARM
+// at deploy time and is NOT recorded in deployment history; only the secretUri
+// is surfaced as a module output.
+// =============================================================================
+resource keyVault 'Microsoft.KeyVault/vaults@2024-04-01-preview' existing = {
+  name: keyVaultName
+}
+
+resource apimSubscriptionKeySecret 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview' = {
+  parent: keyVault
+  name: apimSubscriptionKeySecretName
+  properties: {
+    value: functionSubscription.listSecrets().primaryKey
+    contentType: 'text/plain'
+  }
+}
+
 // API-level base policy (retry + circuit breaker behaviour + correlation).
+// dependsOn the named values referenced via {{...}} in api-base.xml so the
+// policy parser can resolve them on first deploy.
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = {
   parent: api
   name: 'policy'
@@ -232,13 +279,16 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = 
       pool.name
     )
   }
+  dependsOn: [
+    maxBodyBytesNv
+  ]
 }
 
 // =============================================================================
 // Operations
 // =============================================================================
 
-// --- Stateless analyze operations (round-robin, no pin) ---------------------
+// --- Analyze operations (round-robin unless text analysis uses blocklists) ---
 
 // 1. POST /text:analyze
 resource opAnalyzeText 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = {
@@ -306,9 +356,9 @@ resource opListBlocklists 'Microsoft.ApiManagement/service/apis/operations@2024-
   }
 }
 
-// --- Blocklist mutations (pin write + idempotency) --------------------------
+// --- Blocklist mutations (deterministic ownership; Function idempotency) -----
 
-// 7. PATCH /text/blocklists/{blocklistName}  — create-or-update (pin write)
+// 7. PATCH /text/blocklists/{blocklistName} — create-or-update
 resource opUpsertBlocklist 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = {
   parent: api
   name: 'upsert-blocklist'
@@ -362,7 +412,7 @@ resource opRemoveItems 'Microsoft.ApiManagement/service/apis/operations@2024-05-
   }
 }
 
-// --- Blocklist reads/deletes (pin read) -------------------------------------
+// --- Blocklist reads/deletes (deterministic ownership) -----------------------
 
 // 10. GET /text/blocklists/{blocklistName}
 resource opGetBlocklist 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = {
@@ -445,17 +495,15 @@ resource opGetItem 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' 
 // Operation policies — load XML files from policies/ and substitute tokens.
 // =============================================================================
 var statelessPolicy = loadTextContent('policies/stateless.xml')
-var pinReadPolicy = loadTextContent('policies/blocklist-pin-read.xml')
-// Note: blocklist-pin-write.xml is reserved for future use (e.g., a non-idempotent
-// mutation flow). It is not loaded here to avoid an unused-vars linter warning.
-var pinWriteIdempotentPolicy = loadTextContent('policies/idempotent-mutation.xml')
+var blocklistPolicy = loadTextContent('policies/blocklist-routing.xml')
+var analyzeTextPolicy = loadTextContent('policies/analyze-text.xml')
 
 resource policyAnalyzeText 'Microsoft.ApiManagement/service/apis/operations/policies@2024-05-01' = {
   parent: opAnalyzeText
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: statelessPolicy
+    value: analyzeTextPolicy
   }
   dependsOn: [
     apiPolicy
@@ -527,11 +575,10 @@ resource policyUpsertBlocklist 'Microsoft.ApiManagement/service/apis/operations/
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinWriteIdempotentPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
-    idempotencyTtlNv
   ]
 }
 
@@ -540,11 +587,10 @@ resource policyAddItems 'Microsoft.ApiManagement/service/apis/operations/policie
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinWriteIdempotentPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
-    idempotencyTtlNv
   ]
 }
 
@@ -553,11 +599,10 @@ resource policyRemoveItems 'Microsoft.ApiManagement/service/apis/operations/poli
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinWriteIdempotentPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
-    idempotencyTtlNv
   ]
 }
 
@@ -566,7 +611,7 @@ resource policyGetBlocklist 'Microsoft.ApiManagement/service/apis/operations/pol
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinReadPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
@@ -578,7 +623,7 @@ resource policyDeleteBlocklist 'Microsoft.ApiManagement/service/apis/operations/
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinReadPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
@@ -590,7 +635,7 @@ resource policyListItems 'Microsoft.ApiManagement/service/apis/operations/polici
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinReadPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
@@ -602,11 +647,41 @@ resource policyGetItem 'Microsoft.ApiManagement/service/apis/operations/policies
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinReadPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
   ]
+}
+
+// =============================================================================
+// Diagnostic settings - ship platform logs (GatewayLogs) + AllMetrics to the
+// shared Log Analytics workspace so the operator can answer "did the rate-limit
+// fire?" / "who sent the malformed payload?" post-incident without hopping
+// through App Insights.
+// =============================================================================
+resource apimDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  scope: apim
+  name: 'apim-to-log-analytics'
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      {
+        category: 'GatewayLogs'
+        enabled: true
+      }
+      {
+        category: 'WebSocketConnectionLogs'
+        enabled: true
+      }
+    ]
+    metrics: [
+      {
+        category: 'AllMetrics'
+        enabled: true
+      }
+    ]
+  }
 }
 
 // =============================================================================
@@ -616,3 +691,5 @@ output id string = apim.id
 output name string = apim.name
 output gatewayUrl string = apim.properties.gatewayUrl
 output principalId string = apim.identity.principalId
+output functionSubscriptionName string = functionSubscription.name
+output apimSubscriptionKeySecretUri string = apimSubscriptionKeySecret.properties.secretUri
