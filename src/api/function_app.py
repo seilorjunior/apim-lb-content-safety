@@ -18,13 +18,20 @@ Routes (all require a function key — `?code=<key>` or `x-functions-key`):
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import re
+from functools import lru_cache
 from urllib.parse import parse_qsl, quote, urlsplit
 
 import azure.functions as func
 import httpx
+from azure.identity import ManagedIdentityCredential
+from azure.storage.blob import ContainerClient
+
+from idempotency import BlobStore, Envelope, FingerprintConflict, InProgress, digest
 
 # httpx logs every request URL (including query string) at INFO. Our caller-facing
 # routes accept `?code=<function-key>` for FUNCTION auth, so leaving httpx at INFO
@@ -47,13 +54,10 @@ PREVIEW_API_VERSION = os.environ.get(
 # Content Safety image hard limit). Override via env when domain rules differ.
 MAX_REQUEST_BODY_BYTES = int(os.environ.get("MAX_REQUEST_BODY_BYTES", str(10 * 1024 * 1024)))
 
-# Retry transient APIM-side failures. We retry only when the upstream call is
-# safe to repeat: idempotent HTTP methods, OR any method that carries an
-# Idempotency-Key (the APIM policy contract guarantees replay-safety).
-_RETRY_STATUS = frozenset({502, 503, 504})
-_IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-_RETRY_MAX_ATTEMPTS = 3
-_RETRY_BACKOFF_BASE_SECONDS = 0.25
+# APIM owns the entire retry budget. The Function always sends exactly once.
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_PAGING_PARAMS = frozenset({"top", "maxpagesize", "skiptoken"})
+_UPSTREAM_TOTAL_TIMEOUT_SECONDS = 60
 
 _FORWARD_REQUEST_HEADERS = frozenset(
     {
@@ -61,7 +65,6 @@ _FORWARD_REQUEST_HEADERS = frozenset(
         "accept",
         "accept-encoding",
         "accept-language",
-        "idempotency-key",
         "x-correlation-id",
         "traceparent",
         "tracestate",
@@ -72,8 +75,13 @@ _FORWARD_RESPONSE_HEADERS = frozenset(
         "content-type",
         "location",
         "x-correlation-id",
-        "x-idempotent-replay",
         "retry-after",
+        "etag",
+        "last-modified",
+        "x-ms-request-id",
+        "apim-request-id",
+        "traceparent",
+        "tracestate",
     }
 )
 
@@ -118,54 +126,40 @@ def _trace_headers(req):
     return out
 
 
-def _is_retry_safe(method: str, headers) -> bool:
-    """Retry only when the upstream call is replay-safe.
+@lru_cache(maxsize=1)
+def _idempotency_store():
+    endpoint = os.environ["IDEMPOTENCY_BLOB_ENDPOINT"]
+    container = os.environ["IDEMPOTENCY_CONTAINER"]
+    if not endpoint.startswith("https://"):
+        raise ValueError("Idempotency storage requires HTTPS")
+    return BlobStore(
+        ContainerClient(
+            account_url=endpoint, container_name=container,
+            credential=ManagedIdentityCredential(),
+            retry_total=0, connection_timeout=10, read_timeout=30,
+        ),
+        ttl=int(os.environ.get("IDEMPOTENCY_TTL_SECONDS", "3600")),
+    )
 
-    True for idempotent HTTP methods, OR any method that carries an
-    Idempotency-Key (the APIM policy contract guarantees replay-safety).
-    """
-    if method.upper() in _IDEMPOTENT_METHODS:
-        return True
-    return any(k.lower() == "idempotency-key" for k in headers)
+
+def _error(req, status, code, message, retry_after=False):
+    headers = _trace_headers(req)
+    if retry_after:
+        headers["retry-after"] = "5"
+    return func.HttpResponse(
+        body=json.dumps({"code": code, "message": message}).encode(),
+        status_code=status, mimetype="application/json", headers=headers,
+    )
 
 
-async def _request_with_retry(method, url, params, content, headers, retry_safe):
-    """Execute the upstream call with bounded exponential backoff on transient failures."""
-    last_exc: BaseException | None = None
-    last_resp: httpx.Response | None = None
-
-    attempts = _RETRY_MAX_ATTEMPTS if retry_safe else 1
-    for attempt in range(attempts):
-        try:
-            resp = await _HTTP_CLIENT.request(
-                method=method,
-                url=url,
-                params=params,
-                content=content,
-                headers=headers,
-            )
-        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as ex:
-            last_exc = ex
-            if attempt + 1 == attempts:
-                raise
-        else:
-            last_resp = resp
-            if resp.status_code not in _RETRY_STATUS or attempt + 1 == attempts:
-                return resp
-            logging.info(
-                "Upstream %s on attempt %d/%d; retrying", resp.status_code, attempt + 1, attempts
-            )
-
-        # Exponential backoff: 0.25, 0.5 (max attempt index = 1 when attempts=3)
-        await asyncio.sleep(_RETRY_BACKOFF_BASE_SECONDS * (2**attempt))
-
-    # Defensive: loop exits via return or raise; last_resp is the most recent
-    # response when retries exhausted on retryable status.
-    if last_resp is not None:
-        return last_resp
-    if last_exc is not None:  # pragma: no cover - belt-and-suspenders
-        raise last_exc
-    raise RuntimeError("retry loop exited without a response")  # pragma: no cover
+def _response(envelope, replay=False):
+    headers = dict(envelope.headers)
+    if replay:
+        headers["x-idempotent-replay"] = "true"
+    return func.HttpResponse(
+        body=envelope.body, status_code=envelope.status, headers=headers,
+        mimetype=headers.get("content-type", "application/json"),
+    )
 
 
 async def _proxy(req, method, path, preview=False):
@@ -196,15 +190,49 @@ async def _proxy(req, method, path, preview=False):
         )
 
     url, params = _build_url(path, preview=preview)
-    # Merge inbound query string so server-side paging (top/skiptoken/...) reaches APIM.
-    # `api-version` is sourced from server config and cannot be overridden by the caller.
-    inbound = urlsplit(req.url).query
-    if inbound:
-        for k, v in parse_qsl(inbound, keep_blank_values=True):
-            if k.lower() != "api-version":
+    # Only list operations support paging. Credentials and arbitrary query
+    # parameters must never be copied into the upstream URL or fingerprint.
+    if method == "GET" and (
+        path == "/text/blocklists" or path.endswith("/blocklistItems")
+    ):
+        for k, v in parse_qsl(urlsplit(req.url).query, keep_blank_values=True):
+            if k in _PAGING_PARAMS:
                 params[k] = v
 
     fwd_headers = _filter_headers(dict(req.headers), _FORWARD_REQUEST_HEADERS)
+    claim = None
+    store = None
+    key = req.headers.get("idempotency-key")
+    if method not in _READ_METHODS and key is not None:
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", key):
+            return _error(req, 400, "InvalidIdempotencyKey",
+                          "Idempotency-Key must match ^[A-Za-z0-9._-]{1,128}$")
+        # FUNCTION auth exposes no verified individual principal. The boundary
+        # is all holders of this Function's credentials, not caller-supplied
+        # identity headers. Deploy separate Functions/storage for tenant isolation.
+        scope = ["function-credentials", APIM_GATEWAY_URL, method, path, params["api-version"]]
+        fingerprint = digest([
+            params, hashlib.sha256(body or b"").hexdigest(),
+            {k: v for k, v in fwd_headers.items() if k in {
+                "content-type", "accept", "accept-encoding", "accept-language",
+            }},
+        ])
+        try:
+            store = _idempotency_store()
+            claim = await asyncio.to_thread(store.claim, scope, key, fingerprint)
+        except InProgress:
+            return _error(req, 409, "IdempotencyInFlight",
+                          "Operation is in progress or requires reconciliation", retry_after=True)
+        except FingerprintConflict:
+            return _error(req, 422, "IdempotencyKeyConflict",
+                          "Idempotency-Key was already used with a different request")
+        except Exception:
+            logging.error("Idempotency claim unavailable; no upstream request sent")
+            return _error(req, 503, "IdempotencyUnavailable",
+                          "Durable coordination unavailable", retry_after=True)
+        if isinstance(claim, Envelope):
+            return _response(claim, replay=True)
+
     if APIM_SUBSCRIPTION_KEY:
         fwd_headers["ocp-apim-subscription-key"] = APIM_SUBSCRIPTION_KEY
 
@@ -218,31 +246,37 @@ async def _proxy(req, method, path, preview=False):
     )
 
     try:
-        upstream = await _request_with_retry(
-            method=method,
-            url=url,
-            params=params,
-            content=body,
-            headers=fwd_headers,
-            retry_safe=_is_retry_safe(method, req.headers),
+        async with asyncio.timeout(_UPSTREAM_TOTAL_TIMEOUT_SECONDS):
+            upstream = await _HTTP_CLIENT.request(
+                method=method,
+                url=url,
+                params=params,
+                content=body,
+                headers=fwd_headers,
+            )
+    except (httpx.HTTPError, TimeoutError):
+        logging.error("APIM upstream call failed; outcome may be unknown")
+        failure = _error(req, 502, "UpstreamFailure", "Upstream outcome is unknown")
+        envelope = Envelope(502, failure.get_body(), dict(failure.headers))
+        definitive = False
+    else:
+        envelope = Envelope(
+            upstream.status_code, upstream.content,
+            _filter_headers(upstream.headers, _FORWARD_RESPONSE_HEADERS),
         )
-    except httpx.HTTPError as ex:
-        logging.exception("APIM upstream call failed")
-        err_headers = _trace_headers(req)
-        return func.HttpResponse(
-            body=json.dumps({"code": "UpstreamFailure", "message": str(ex)}).encode("utf-8"),
-            status_code=502,
-            mimetype="application/json",
-            headers=err_headers,
-        )
+        # Accepted async work, gateway/server failures and request timeouts do
+        # not establish a final mutation outcome. Replay them without expiry.
+        definitive = upstream.status_code < 500 and upstream.status_code not in {202, 408}
 
-    resp_headers = _filter_headers(upstream.headers, _FORWARD_RESPONSE_HEADERS)
-    return func.HttpResponse(
-        body=upstream.content,
-        status_code=upstream.status_code,
-        headers=resp_headers,
-        mimetype=resp_headers.get("content-type", "application/json"),
-    )
+    if claim is not None:
+        try:
+            await asyncio.to_thread(store.complete, claim, envelope, definitive)
+        except Exception:
+            logging.error("Idempotency completion unavailable; claim retained for reconciliation")
+            return _error(req, 503, "IdempotencyUnavailable",
+                          "Outcome could not be durably recorded; do not use a new key",
+                          retry_after=True)
+    return _response(envelope)
 
 
 # ----------------------------------------------------------------------------

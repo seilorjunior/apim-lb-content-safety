@@ -26,7 +26,6 @@ param useExternalCache bool
 param redisConnectionStringSecretUri string
 @secure()
 param redisConnectionString string
-param idempotencyTtlSeconds int
 @description('Maximum request body size in bytes. Surfaced as APIM named value {{max-request-body-bytes}} and enforced by the api-base.xml policy (returns 413 PayloadTooLarge before the call reaches Content Safety). Defense-in-depth: the Function App enforces the same cap on inbound bodies via MAX_REQUEST_BODY_BYTES.')
 param maxRequestBodyBytes int
 param tags object
@@ -90,7 +89,7 @@ resource externalCache 'Microsoft.ApiManagement/service/caches@2024-05-01' = if 
   parent: apim
   name: 'default'
   properties: {
-    description: 'AMR external cache (blocklist pinning + idempotency)'
+    description: 'Optional cache for custom policies; not used for ownership or idempotency'
     connectionString: redisConnectionString
     useFromLocation: location
     resourceId: redisConnectionStringSecretUri
@@ -100,16 +99,6 @@ resource externalCache 'Microsoft.ApiManagement/service/caches@2024-05-01' = if 
 // =============================================================================
 // Named values (parsed at policy compile time, so they substitute as literals).
 // =============================================================================
-resource idempotencyTtlNv 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
-  parent: apim
-  name: 'idempotency-ttl-seconds'
-  properties: {
-    displayName: 'idempotency-ttl-seconds'
-    value: string(idempotencyTtlSeconds)
-    secret: false
-  }
-}
-
 // Substituted at policy parse time into the <check-body-size> block in
 // api-base.xml. Keeping it as a named value lets operators retune the cap
 // without redeploying the policy XML.
@@ -299,7 +288,7 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = 
 // Operations
 // =============================================================================
 
-// --- Stateless analyze operations (round-robin, no pin) ---------------------
+// --- Analyze operations (round-robin unless text analysis uses blocklists) ---
 
 // 1. POST /text:analyze
 resource opAnalyzeText 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = {
@@ -367,9 +356,9 @@ resource opListBlocklists 'Microsoft.ApiManagement/service/apis/operations@2024-
   }
 }
 
-// --- Blocklist mutations (pin write + idempotency) --------------------------
+// --- Blocklist mutations (deterministic ownership; Function idempotency) -----
 
-// 7. PATCH /text/blocklists/{blocklistName}  — create-or-update (pin write)
+// 7. PATCH /text/blocklists/{blocklistName} — create-or-update
 resource opUpsertBlocklist 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = {
   parent: api
   name: 'upsert-blocklist'
@@ -423,7 +412,7 @@ resource opRemoveItems 'Microsoft.ApiManagement/service/apis/operations@2024-05-
   }
 }
 
-// --- Blocklist reads/deletes (pin read) -------------------------------------
+// --- Blocklist reads/deletes (deterministic ownership) -----------------------
 
 // 10. GET /text/blocklists/{blocklistName}
 resource opGetBlocklist 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = {
@@ -506,17 +495,15 @@ resource opGetItem 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' 
 // Operation policies — load XML files from policies/ and substitute tokens.
 // =============================================================================
 var statelessPolicy = loadTextContent('policies/stateless.xml')
-var pinReadPolicy = loadTextContent('policies/blocklist-pin-read.xml')
-// Note: blocklist-pin-write.xml is reserved for future use (e.g., a non-idempotent
-// mutation flow). It is not loaded here to avoid an unused-vars linter warning.
-var pinWriteIdempotentPolicy = loadTextContent('policies/idempotent-mutation.xml')
+var blocklistPolicy = loadTextContent('policies/blocklist-routing.xml')
+var analyzeTextPolicy = loadTextContent('policies/analyze-text.xml')
 
 resource policyAnalyzeText 'Microsoft.ApiManagement/service/apis/operations/policies@2024-05-01' = {
   parent: opAnalyzeText
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: statelessPolicy
+    value: analyzeTextPolicy
   }
   dependsOn: [
     apiPolicy
@@ -588,11 +575,10 @@ resource policyUpsertBlocklist 'Microsoft.ApiManagement/service/apis/operations/
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinWriteIdempotentPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
-    idempotencyTtlNv
   ]
 }
 
@@ -601,11 +587,10 @@ resource policyAddItems 'Microsoft.ApiManagement/service/apis/operations/policie
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinWriteIdempotentPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
-    idempotencyTtlNv
   ]
 }
 
@@ -614,11 +599,10 @@ resource policyRemoveItems 'Microsoft.ApiManagement/service/apis/operations/poli
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinWriteIdempotentPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
-    idempotencyTtlNv
   ]
 }
 
@@ -627,7 +611,7 @@ resource policyGetBlocklist 'Microsoft.ApiManagement/service/apis/operations/pol
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinReadPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
@@ -639,7 +623,7 @@ resource policyDeleteBlocklist 'Microsoft.ApiManagement/service/apis/operations/
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinReadPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
@@ -651,7 +635,7 @@ resource policyListItems 'Microsoft.ApiManagement/service/apis/operations/polici
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinReadPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy
@@ -663,7 +647,7 @@ resource policyGetItem 'Microsoft.ApiManagement/service/apis/operations/policies
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: pinReadPolicy
+    value: blocklistPolicy
   }
   dependsOn: [
     apiPolicy

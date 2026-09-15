@@ -1,0 +1,26 @@
+<!--
+  Stable ownership: SHA-256(UTF-8 blocklistName), first byte modulo two.
+  Never fall back to the pool: a missing or unavailable owner is not evidence
+  that the other account has the same data. Existing lists must be migrated
+  to their deterministic owner before enabling this policy.
+-->
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="blocklistBackend" value='@{
+      var name = (string)context.Request.MatchedParameters["blocklistName"];
+      var hash = System.Security.Cryptography.SHA256.Create().ComputeHash(System.Text.Encoding.UTF8.GetBytes(name));
+      return hash[0] % 2 == 0 ? "cs-primary" : "cs-secondary";
+    }' />
+    <set-backend-service backend-id='@((string)context.Variables["blocklistBackend"])' />
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>
