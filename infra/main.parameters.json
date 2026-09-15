@@ -28,6 +28,12 @@
     },
     "useProductionGuards": {
       "value": "${AZURE_USE_PRODUCTION_GUARDS=false}"
+    },
+    "corsAllowedOrigins": {
+      "value": "${AZURE_CORS_ALLOWED_ORIGINS=[]}"
+    },
+    "maxRequestBodyBytes": {
+      "value": "${AZURE_MAX_REQUEST_BODY_BYTES=10485760}"
     }
   }
 }

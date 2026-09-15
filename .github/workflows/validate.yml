@@ -15,7 +15,7 @@ jobs:
     name: Bicep build + lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Install Bicep
         run: az bicep install
@@ -32,27 +32,21 @@ jobs:
     name: APIM policy XML well-formedness
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
 
-      # NOTE: APIM policies use a lenient XML grammar — C# expressions in
-      # attribute values (e.g. value="@(ctx.Var["foo"])") are accepted by the
-      # APIM policy parser but are not strict-XML well-formed. So we use
-      # `xmllint --recover` which tolerates these expression-string quirks
-      # and only fails on genuine structural breakage (missing close tag,
-      # unbalanced elements, illegal entities, etc.).
+      # Expressions must use valid XML quoting and entity escaping.
+      # XML parsing does not replace deploying the policies to APIM.
       - name: Structural validation of every policy XML
         run: |
           set -euo pipefail
           fail=0
           for f in infra/modules/policies/*.xml; do
             echo "== $f =="
-            # --recover: tolerate well-formedness violations from APIM expressions.
-            # We only treat unrecoverable structural failures as errors.
-            if ! xmllint --noout --recover "$f" 2> /tmp/xmllint.err; then
-              echo "::error file=$f::Unrecoverable XML structural error"
+            if ! xmllint --noout "$f" 2> /tmp/xmllint.err; then
+              echo "::error file=$f::Invalid policy XML"
               cat /tmp/xmllint.err
               fail=1
             fi
@@ -73,7 +67,7 @@ jobs:
     name: Markdown lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: DavidAnson/markdownlint-cli2-action@db43aef879112c3119a410d69f66701e0d530809  # v17
         with:
           globs: '**/*.md'

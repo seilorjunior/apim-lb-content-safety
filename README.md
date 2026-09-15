@@ -4,10 +4,12 @@
 [![validate](https://github.com/seilorjunior/apim-lb-content-safety/actions/workflows/validate.yml/badge.svg)](.github/workflows/validate.yml)
 [![test](https://github.com/seilorjunior/apim-lb-content-safety/actions/workflows/test.yml/badge.svg)](.github/workflows/test.yml)
 
-Production-grade `azd` template that load-balances **two Azure AI Content
+Reference `azd` template that load-balances **two Azure AI Content
 Safety accounts** (Brazil South + East US 2 by default) behind **API
-Management** with managed-identity auth, retries, circuit breakers, blocklist
-pinning, and an Idempotency-Key contract on mutations.
+Management** with managed-identity backend auth, bounded read retries, circuit
+breakers, deterministic blocklist ownership, and durable mutation idempotency.
+Validate the deployed policies and failure scenarios in your environment before
+production use; offline checks alone do not establish production readiness.
 
 Modeled after [`apim-lb-speech-service`](https://github.com/seilorjunior/apim-lb-speech-service)
 but adapted for the Content Safety surface (Text + Image + Groundedness +
@@ -17,12 +19,12 @@ Protected Material + Prompt Shields + Blocklists).
 
 ```mermaid
 flowchart LR
-    Caller([Client]) -->|"POST /api/analyze-text"| Func[Function App<br/>Python 3.11 / Flex]
-    Func -->|MI| APIM[API Management<br/>Basic v2]
+    Caller([Client]) -->|"Function key"| Func[Function App<br/>Python 3.11 / Flex]
+    Func -->|"subscription key from Key Vault"| APIM[API Management<br/>Basic v2]
+    Func -->|"MI + conditional writes"| Storage[(Blob idempotency records)]
     APIM -->|round-robin pool<br/>+ circuit breaker| Pool{{cs-pool}}
     Pool -->|MI| CS1[(Content Safety<br/>brazilsouth)]
     Pool -->|MI| CS2[(Content Safety<br/>eastus2)]
-    APIM -.->|optional<br/>external cache| Redis[(Azure Managed<br/>Redis)]
     APIM --> AI[(App Insights)]
     Func --> AI
 ```
@@ -33,8 +35,10 @@ Why a Function App in front of APIM?
   over.
 - Lets you add request shaping, fan-out, or domain-specific validation in
   Python without amending policy XML.
-- The Function is deliberately **thin** — APIM is the source of truth for
-  load-balancing, retries, idempotency, and blocklist pinning.
+- The Function owns durable idempotency and query filtering. APIM owns
+  load-balancing, the entire retry budget, and deterministic blocklist routing.
+- All Function-key holders share one trust boundary; this is not tenant
+  isolation. Use separately authenticated and isolated deployments for tenants.
 
 ## What lives where
 
@@ -47,7 +51,7 @@ apim-lb-content-safety/
 │   ├── main.parameters.json         # azd env-var bindings
 │   └── modules/
 │       ├── monitoring.bicep         # Log Analytics + App Insights
-│       ├── storage.bicep            # MI-only blob (deployment package)
+│       ├── storage.bicep            # MI-only blob (deployment + idempotency)
 │       ├── contentsafety.bicep      # ONE module deployed twice (pri/sec)
 │       ├── keyvault.bicep           # RBAC-only KV (Redis cs string)
 │       ├── redis.bicep              # opt-in Azure Managed Redis (Balanced_B0)
@@ -56,12 +60,12 @@ apim-lb-content-safety/
 │       ├── rbac.bicep               # MI role assignments
 │       └── policies/
 │           ├── api-base.xml             # round-robin pool + MI auth + retry
-│           ├── stateless.xml            # no pinning (analyze, list-blocklists)
-│           ├── blocklist-pin-read.xml   # cs-blocklist-{name} → backend
-│           ├── blocklist-pin-write.xml  # (reserved for future)
-│           └── idempotent-mutation.xml  # full Idempotency-Key contract
+│           ├── stateless.xml            # pool routing without state
+│           ├── analyze-text.xml         # routes analyses using owned blocklists
+│           └── blocklist-routing.xml    # SHA-256(name) → stable owner
 ├── src/api/                         # Python Function App
 │   ├── function_app.py              # 14 routes, all proxy to APIM
+│   ├── idempotency.py               # atomic claims and response envelopes
 │   ├── host.json
 │   ├── requirements.txt
 │   ├── requirements-dev.txt
@@ -97,7 +101,7 @@ azd init
 azd env set AZURE_LOCATION                 brazilsouth
 azd env set SECONDARY_CONTENT_SAFETY_LOCATION eastus2
 # Optional knobs:
-azd env set AZURE_USE_EXTERNAL_CACHE       false           # true → Azure Managed Redis
+azd env set AZURE_USE_EXTERNAL_CACHE       false           # only needed for custom cache policies
 azd env set IDEMPOTENCY_TTL_SECONDS        3600            # 60..604800
 azd env set USE_PRODUCTION_GUARDS          false           # true → KV purge protection
 azd up
@@ -115,8 +119,27 @@ pwsh ./scripts/postprovision.ps1
 ```pwsh
 pwsh ./scripts/test-deployment.ps1
 pwsh ./scripts/test-deployment.ps1 -Blocklists      # exercise blocklist CRUD + idempotency replay
+pwsh ./scripts/test-deployment.ps1 -Reliability    # concurrent mutations, replay fidelity, ownership
 pwsh ./scripts/load-test.ps1 -Count 200 -Concurrency 25
 ```
+
+Only in an isolated, disposable deployment, opt in to outage and cold-worker
+checks:
+
+```pwsh
+pwsh ./scripts/test-deployment.ps1 -Reliability -FaultInjection -DisposableEnvironment -RestartFunction
+```
+
+This temporarily changes a backend path on its existing trusted origin, configures
+its circuit breaker to trip on a 404, and restarts the Function. The script restores
+the URL and breaker configuration in `finally`, but interruption or management-plane
+failure can require manual restoration. It requires an observed fault and twelve
+consecutive successful stateless calls, checks owner failure without stateful
+rerouting, and verifies persisted replay after restart.
+It does **not** flush Redis or APIM caches, prove circuit-breaker state, or prove
+exact upstream dispatch counts; use gateway telemetry for those assertions.
+No routing/idempotency policy depends on APIM caches. Run the suite with external
+cache disabled to verify the cache-free deployment as well.
 
 To verify round-robin distribution, run this KQL against the App Insights
 workspace:
@@ -132,7 +155,9 @@ A healthy split is roughly 50/50.
 
 ## Idempotency contract (mutations)
 
-Implemented in `infra/modules/policies/idempotent-mutation.xml`. Applied to:
+Implemented in the Function (`src/api/idempotency.py`) using private Azure Blob
+Storage and managed identity. Applied to non-read requests with an
+`Idempotency-Key`, including:
 
 - `PATCH /api/blocklists/{name}` (upsert)
 - `POST  /api/blocklists/{name}/items:add` (add or update items)
@@ -144,38 +169,87 @@ Behaviour, in order:
 | --- | --- | --- |
 | `Idempotency-Key` absent | (passthrough) | Forward without caching |
 | Key fails `^[A-Za-z0-9._-]{1,128}$` | `400 InvalidIdempotencyKey` | JSON error |
-| Hash hit + same body | `201` | Cached body + `X-Idempotent-Replay: true` + `Location` |
-| Hash hit + different body | `422 IdempotencyKeyConflict` | JSON error |
-| In-flight sentinel exists | `409 IdempotencyInFlight` | `Retry-After: 5` |
-| Otherwise | (forward) | Caches body, location, then hash on 2xx |
+| Completed record + matching fingerprint | Original status | Original body/headers + `X-Idempotent-Replay: true` |
+| Same scoped key + different fingerprint | `422 IdempotencyKeyConflict` | JSON error |
+| Pending operation | `409 IdempotencyInFlight` | `Retry-After: 5`; may require reconciliation |
+| Storage unavailable | `503 IdempotencyUnavailable` | Fail closed; no uncoordinated forwarding |
+| Otherwise | (forward once) | Atomically claims key, then stores one response envelope |
 
-TTL is governed by the named value `idempotency-ttl-seconds` (default 3600 s,
-range 60–604800). The hash is written **last** so a hash hit guarantees the
-body is also present.
+Keys are scoped by the Function credential boundary, APIM URL, HTTP method,
+resource path, and API version. Fingerprints cover the body, supported query
+parameters, and content-negotiation headers. Caller-supplied identity headers
+do not create a trusted tenant scope. A different resource or operation may
+reuse the same key without replaying an unrelated result.
+
+Initial claims use conditional blob creation; reclaiming an expired completed
+record and completing a claim require an ETag compare-and-swap. There is no
+lookup-then-write cache lock or separately stored hash/body pair.
+`IDEMPOTENCY_TTL_SECONDS` controls the completed-response replay window (default
+3600 s, range 60–604800). After expiry, a new claim may execute again.
+
+**Unknown outcomes do not expire automatically.** Pending records survive
+worker termination. Transport failures, HTTP 202/408, and 5xx responses are
+uncertain: if saved, their responses replay indefinitely; otherwise the pending
+record returns 409. Reconcile the backend outcome before an operator deletes or
+repairs such a record. Do not retry an uncertain mutation with a new key or
+apply lifecycle deletion to the idempotency container. This deliberately favors
+avoiding duplicate effects over automatic recovery; it is not an exactly-once
+transaction with Content Safety. Definitive error responses also replay during
+their TTL.
+
+The Function consumes `Idempotency-Key`; APIM rejects the header on direct
+gateway calls with `400 IdempotencyRequiresFunction`. Direct unkeyed APIM calls
+have no durable replay contract.
 
 ## Notes & limitations
 
-- **Blocklist replication is your responsibility.** APIM pins `{name} →
-  backend` *after* the first successful PATCH. If you want a blocklist
-  available on both accounts, create it twice (one targeted call per backend
-  via direct CS auth) — APIM does not replicate data plane state across
-  accounts.
+- **Blocklist ownership is deterministic.** The first byte of
+  SHA-256(UTF-8(blocklist name)), modulo two, chooses primary (0) or secondary
+  (1). Every named read, mutation, and delete uses that owner without a cache.
+  Keep exact name spelling and the hash/account mapping stable.
+- **No automatic stateful failover.** An unavailable owner returns an error,
+  not a read/write against a potentially stale peer. Replication and recovery
+  remain operator responsibilities. Text analysis with `blocklistNames` uses
+  their owner; requests spanning both owners return `400 InvalidBlocklistRouting`
+  and must be split explicitly.
 - **`GET /api/blocklists` round-robins.** Listings will show only the
-  blocklists owned by whichever backend handled the call. The pin cache
-  only covers `{name}`-scoped operations.
-- **APIM Basic v2** does not include a built-in external cache. The internal
-  cache works for single-instance scenarios; for HA across multiple gateway
-  units, set `AZURE_USE_EXTERNAL_CACHE=true` to provision Azure Managed
-  Redis (Balanced_B0 ≈ $40/mo) and bind it as the external cache.
-- **Function auth is `anonymous`** to keep the smoke tests simple. Tighten
-  this for production: switch to `function`, add `Easy Auth`, or front it
-  with another APIM API.
+  blocklists owned by whichever backend handled the call, not a merged global
+  inventory; listing pagination is not pinned to one account.
+- **Redis is not required for correctness.** Neither blocklist routing nor
+  idempotency depends on APIM caches. The optional Redis deployment is retained
+  for custom policies; enabling it does not add replication or stronger guarantees.
+- **Function auth is `function`**, including health. Prefer the
+  `x-functions-key` header; `?code=` is accepted only at ingress and is not
+  forwarded. Function → APIM uses a Key Vault-backed subscription key;
+  APIM → Content Safety and Function → Blob Storage use managed identity.
+- **Query forwarding is allowlisted.** Only supported paging parameters
+  (`top`, `maxpagesize`, `skiptoken`) on list operations are forwarded.
+  API versions are server-controlled; credentials and unknown parameters are dropped.
 - **Quotas**: Content Safety S0 has region-specific TPS limits. The retry
-  policy (3× on 429/5xx with backoff) absorbs short bursts but does not
-  replace upstream quota planning.
+  policy retries only GET/HEAD/OPTIONS on 429/5xx, at most four attempts with
+  10-second per-attempt header timeouts and at most three 5-second backoffs.
+  The Function never adds retries. POST/PATCH/DELETE get one 50-second header
+  timeout attempt, with or without a key. The Function additionally enforces
+  a 60-second total upstream deadline, including response-body transfer;
+  storage coordination is outside that deadline. Callers must handle throttling explicitly;
+  retries do not replace quota planning.
 - **Region pair**: defaults are `brazilsouth` + `eastus2`. Override via
   `AZURE_LOCATION` and `SECONDARY_CONTENT_SAFETY_LOCATION`. Confirm the
   Content Safety SKU is GA in your chosen regions before deploying.
+
+### Upgrading an existing deployment
+
+Stop writes and drain in-flight requests before changing routing. Inventory and
+migrate existing blocklists to their deterministic owners using direct Content
+Safety access; old random pins are not imported. Preserve application references
+to items during migration and verify each owned read and analysis before resuming.
+Do not replay pre-upgrade idempotency keys against the new store: resolve their
+outcomes and retire them first (old APIM cache records are not migrated).
+
+Blob records contain response data; apply appropriate access controls and
+retention procedures. Completed records are reclaimed on key reuse, not globally
+garbage-collected; monitor storage growth. Never delete pending/uncertain records
+without reconciliation.
 
 ## Local development
 
@@ -191,9 +265,9 @@ func start
 Run the test suite (offline — APIM is mocked with `respx`):
 
 ```pwsh
-pytest --cov=function_app --cov-report=term-missing
+pytest --cov --cov-report=term-missing
 ruff check .
-bandit -c pyproject.toml -r function_app.py
+bandit -c pyproject.toml -r .
 ```
 
 ## Cost rough-cut (monthly, USD, list price)
