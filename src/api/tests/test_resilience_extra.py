@@ -1,12 +1,7 @@
-"""Additional resiliency tests covering production failure modes that the
-original `test_resilience.py` does not exercise.
+"""Additional resiliency tests covering production failure modes.
 
-Grouped by concern:
-  * Transient failure modes (timeouts, mixed errors, backoff schedule)
-  * Retry-eligibility boundaries (5xx that aren't retried, 4xx, Retry-After)
-  * Config & boundary edges (missing config, body-size at limit)
-  * Security (request/response header allowlists, log hygiene)
-  * Concurrency (singleton AsyncClient)
+Single-attempt status/network behavior is parameterized in test_resilience.py.
+These original configuration, header, body, and logging regressions remain intact.
 """
 
 from __future__ import annotations
@@ -24,128 +19,11 @@ from function_app import analyze_text, list_blocklists
 
 
 # ---------------------------------------------------------------------------
-# Transient failure modes
-# ---------------------------------------------------------------------------
-@pytest.mark.asyncio
-async def test_retry_on_read_timeout_then_success(apim_mock, monkeypatch) -> None:
-    """ReadTimeout on a retry-safe method retries once and succeeds."""
-    monkeypatch.setattr(function_app, "_RETRY_BACKOFF_BASE_SECONDS", 0)
-
-    route = apim_mock.get(
-        "/contentsafety/text/blocklists",
-        params={"api-version": "2024-09-01"},
-    ).mock(
-        side_effect=[
-            httpx.ReadTimeout("slow upstream"),
-            httpx.Response(200, json={"value": []}),
-        ]
-    )
-
-    req = func.HttpRequest(method="GET", url="/api/blocklists", body=b"", headers={})
-    resp = await list_blocklists(req)
-
-    assert route.call_count == 2
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_retry_on_write_timeout_then_success(apim_mock, monkeypatch) -> None:
-    """WriteTimeout on a retry-safe method retries and succeeds."""
-    monkeypatch.setattr(function_app, "_RETRY_BACKOFF_BASE_SECONDS", 0)
-
-    route = apim_mock.get(
-        "/contentsafety/text/blocklists",
-        params={"api-version": "2024-09-01"},
-    ).mock(
-        side_effect=[
-            httpx.WriteTimeout("slow send"),
-            httpx.Response(200, json={"value": []}),
-        ]
-    )
-
-    req = func.HttpRequest(method="GET", url="/api/blocklists", body=b"", headers={})
-    resp = await list_blocklists(req)
-
-    assert route.call_count == 2
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_mixed_transient_failures_recover(apim_mock, monkeypatch) -> None:
-    """ConnectError → 502 → 200 within one retry budget."""
-    monkeypatch.setattr(function_app, "_RETRY_BACKOFF_BASE_SECONDS", 0)
-
-    route = apim_mock.get(
-        "/contentsafety/text/blocklists",
-        params={"api-version": "2024-09-01"},
-    ).mock(
-        side_effect=[
-            httpx.ConnectError("blip"),
-            httpx.Response(502, json={"err": "bad gateway"}),
-            httpx.Response(200, json={"value": []}),
-        ]
-    )
-
-    req = func.HttpRequest(method="GET", url="/api/blocklists", body=b"", headers={})
-    resp = await list_blocklists(req)
-
-    assert route.call_count == 3
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_all_retries_fail_with_network_error_returns_502(
-    apim_mock, monkeypatch,
-) -> None:
-    """Every attempt raises → final raise surfaces as 502 UpstreamFailure."""
-    monkeypatch.setattr(function_app, "_RETRY_BACKOFF_BASE_SECONDS", 0)
-
-    route = apim_mock.get(
-        "/contentsafety/text/blocklists",
-        params={"api-version": "2024-09-01"},
-    ).mock(side_effect=httpx.ConnectError("perma"))
-
-    req = func.HttpRequest(method="GET", url="/api/blocklists", body=b"", headers={})
-    resp = await list_blocklists(req)
-
-    assert route.call_count == 3  # _RETRY_MAX_ATTEMPTS
-    assert resp.status_code == 502
-    body = json.loads(resp.get_body())
-    assert body["code"] == "UpstreamFailure"
-
-
-@pytest.mark.asyncio
-async def test_backoff_schedule_is_exponential(apim_mock, monkeypatch) -> None:
-    """Backoff sleeps follow base * 2**attempt (0.25, 0.5 for attempts=3)."""
-    monkeypatch.setattr(function_app, "_RETRY_BACKOFF_BASE_SECONDS", 0.25)
-    sleeps: list[float] = []
-
-    async def fake_sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-
-    monkeypatch.setattr(function_app.asyncio, "sleep", fake_sleep)
-
-    apim_mock.get(
-        "/contentsafety/text/blocklists",
-        params={"api-version": "2024-09-01"},
-    ).mock(return_value=httpx.Response(502, json={"err": "transient"}))
-
-    req = func.HttpRequest(method="GET", url="/api/blocklists", body=b"", headers={})
-    resp = await list_blocklists(req)
-
-    assert resp.status_code == 502
-    # 3 attempts → 2 backoff sleeps between them.
-    assert sleeps == [0.25, 0.5]
-
-
-# ---------------------------------------------------------------------------
 # Retry-eligibility boundaries
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_500_is_not_retried(apim_mock, monkeypatch) -> None:
-    """500 Internal Server Error is NOT in _RETRY_STATUS — single attempt only."""
-    monkeypatch.setattr(function_app, "_RETRY_BACKOFF_BASE_SECONDS", 0)
-
+async def test_500_is_not_retried(apim_mock) -> None:
+    """500 Internal Server Error is returned on the single Function attempt."""
     route = apim_mock.get(
         "/contentsafety/text/blocklists",
         params={"api-version": "2024-09-01"},
@@ -159,10 +37,8 @@ async def test_500_is_not_retried(apim_mock, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_429_with_idempotency_key_is_not_retried(apim_mock, monkeypatch) -> None:
+async def test_429_with_idempotency_key_is_not_retried(apim_mock) -> None:
     """429 is NOT retryable — caller must respect Retry-After itself."""
-    monkeypatch.setattr(function_app, "_RETRY_BACKOFF_BASE_SECONDS", 0)
-
     route = apim_mock.post(
         "/contentsafety/text:analyze",
         params={"api-version": "2024-09-01"},
@@ -190,10 +66,8 @@ async def test_429_with_idempotency_key_is_not_retried(apim_mock, monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_retry_after_preserved_on_final_response(apim_mock, monkeypatch) -> None:
+async def test_retry_after_preserved_on_final_response(apim_mock) -> None:
     """`Retry-After` on a final 503 response must reach the caller."""
-    monkeypatch.setattr(function_app, "_RETRY_BACKOFF_BASE_SECONDS", 0)
-
     apim_mock.get(
         "/contentsafety/text/blocklists",
         params={"api-version": "2024-09-01"},
@@ -278,7 +152,7 @@ async def test_authorization_and_cookie_request_headers_not_forwarded(apim_mock)
         body=b'{"text":"x"}',
         headers={
             "content-type": "application/json",
-            "authorization": "Bearer secret-token-do-not-leak",
+            "authorization": "******",
             "cookie": "session=do-not-leak",
             "x-forwarded-for": "1.2.3.4",
             "x-functions-key": "function-key-do-not-leak",
@@ -308,7 +182,7 @@ async def test_set_cookie_and_server_response_headers_not_echoed(apim_mock) -> N
             headers={
                 "set-cookie": "sessionid=abc; Path=/",
                 "server": "kestrel",
-                "www-authenticate": "Bearer realm=apim",
+                "www-authenticate": "******",
                 "x-powered-by": "ASP.NET",
             },
         )
@@ -356,6 +230,20 @@ async def test_query_string_not_logged(apim_mock, caplog) -> None:
     full_log = " ".join(record.getMessage() for record in caplog.records)
     assert "SUPER-SECRET-KEY" not in full_log
     assert "code=" not in full_log
+
+
+async def test_query_string_and_network_error_not_logged(apim_mock, caplog):
+    apim_mock.get("/contentsafety/text/blocklists").mock(
+        side_effect=httpx.ConnectError("https://secret.example/?code=SUPER-SECRET-KEY"),
+    )
+    req = func.HttpRequest(
+        method="GET", url="/api/blocklists?code=SUPER-SECRET-KEY&top=10", body=b"",
+    )
+    with caplog.at_level(logging.INFO):
+        response = await function_app.list_blocklists(req)
+    assert response.status_code == 502
+    assert "SUPER-SECRET-KEY" not in caplog.text
+    assert b"SUPER-SECRET-KEY" not in response.get_body()
 
 
 # ---------------------------------------------------------------------------
