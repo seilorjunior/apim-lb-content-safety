@@ -26,7 +26,7 @@ expose to untrusted callers:
 5. No retry policy on transient APIM 5xx responses — a single backend hiccup
    surfaced as a 502 to the caller even when retry would have been safe.
 
-## Decision
+## Original decision (see follow-ups for current behavior)
 
 Adopt a **server-to-server-only** posture by default, opt-in to browser usage
 via explicit configuration, and bound all upstream interactions:
@@ -207,3 +207,34 @@ black-hole all legitimate callers. Alternatives under consideration:
    function-key requirement makes anonymous abuse impossible.
 
 No decision yet; tracking as ADR 0004 (proposed).
+
+## 2026-09 follow-up: durable coordination and deterministic ownership
+
+The Function now owns idempotency, using conditional creation and ETag-guarded
+updates in a private Blob Storage container. A response is stored as a single
+envelope with its original status, body, and allowed headers. Keys include the
+operation, resource, and API version within the shared Function credential
+boundary; they are not a tenant isolation mechanism.
+
+Pending and uncertain outcomes cannot be reclaimed automatically. An interrupted
+write might already have committed in Content Safety, so only operator
+reconciliation can safely release that claim. Completed definitive responses
+can be reclaimed after their configured replay window. This replaces the
+non-atomic APIM cache sentinel; Redis is no longer needed for this contract.
+
+APIM owns the entire upstream retry budget: up to four attempts for reads,
+one for mutations and analysis POSTs. Sending an `Idempotency-Key` no longer
+enables automatic retries. The Function consumes the key, while APIM rejects
+direct requests carrying it to avoid promising replay safety it cannot provide.
+The Function forwards only supported list paging query parameters, never
+Function credentials or a caller-selected API version.
+
+Blocklist ownership is derived from SHA-256 of the exact UTF-8 name (first byte
+modulo two). Reads, writes, and analyses using blocklists stay on their owner;
+there is no random fallback after cache loss or owner failure. Analyses spanning
+owners must be split explicitly. Existing randomly placed lists require a
+planned migration before enabling the new routing.
+
+The README describes current operational limitations and upgrade procedures.
+Strict XML validation and offline tests do not execute APIM policy expressions;
+the deployment reliability tests must also run in a disposable Azure environment.

@@ -1,0 +1,48 @@
+<!-- Text analysis using blocklists must run on the account owning those lists. -->
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="blocklistBackend" value='@{
+      try {
+        var body = context.Request.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
+        var names = body["blocklistNames"];
+        if (names == null || names.Type == Newtonsoft.Json.Linq.JTokenType.Null) { return ""; }
+        if (names.Type != Newtonsoft.Json.Linq.JTokenType.Array) { return "invalid"; }
+        var owner = "";
+        foreach (var name in (Newtonsoft.Json.Linq.JArray)names) {
+          if (name.Type != Newtonsoft.Json.Linq.JTokenType.String) { return "invalid"; }
+          var hash = System.Security.Cryptography.SHA256.Create().ComputeHash(System.Text.Encoding.UTF8.GetBytes((string)name));
+          var backend = hash[0] % 2 == 0 ? "cs-primary" : "cs-secondary";
+          if (owner != "" &amp;&amp; owner != backend) { return "mixed"; }
+          owner = backend;
+        }
+        return owner;
+      } catch {
+        return "invalid";
+      }
+    }' />
+    <choose>
+      <when condition='@((string)context.Variables["blocklistBackend"] == "mixed" || (string)context.Variables["blocklistBackend"] == "invalid")'>
+        <return-response>
+          <set-status code="400" reason="InvalidBlocklistRouting" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>{"code":"InvalidBlocklistRouting","message":"Provide valid JSON and blocklistNames belonging to one backend. Split analyses across owners explicitly."}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(!string.IsNullOrEmpty((string)context.Variables["blocklistBackend"]))'>
+        <set-backend-service backend-id='@((string)context.Variables["blocklistBackend"])' />
+      </when>
+    </choose>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

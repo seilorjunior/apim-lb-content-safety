@@ -4,6 +4,9 @@
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "APIM_GATEWAY_URL": "https://apim-CHANGEME.azure-api.net",
+    "IDEMPOTENCY_BLOB_ENDPOINT": "https://stCHANGEME.blob.core.windows.net",
+    "IDEMPOTENCY_CONTAINER": "idempotency",
+    "IDEMPOTENCY_TTL_SECONDS": "3600",
     "CONTENT_SAFETY_API_VERSION": "2024-09-01",
     "CONTENT_SAFETY_PREVIEW_API_VERSION": "2024-09-15-preview"
   }

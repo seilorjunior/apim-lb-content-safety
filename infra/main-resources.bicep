@@ -155,7 +155,6 @@ module apim 'modules/apim.bicep' = {
     useExternalCache: useExternalCache
     redisConnectionStringSecretUri: useExternalCache ? redis!.outputs.connectionStringSecretUri : ''
     redisConnectionString: useExternalCache ? redis!.outputs.connectionString : ''
-    idempotencyTtlSeconds: idempotencyTtlSeconds
     maxRequestBodyBytes: maxRequestBodyBytes
     tags: tags
   }
@@ -173,6 +172,8 @@ module functionApp 'modules/function.bicep' = {
     appServicePlanName: 'plan-${prefix}'
     storageAccountName: storage.outputs.name
     apimGatewayUrl: apim.outputs.gatewayUrl
+    idempotencyContainerName: storage.outputs.idempotencyContainerName
+    idempotencyTtlSeconds: idempotencyTtlSeconds
     apimSubscriptionKeySecretUri: apim.outputs.apimSubscriptionKeySecretUri
     virtualNetworkSubnetId: network.outputs.functionsSubnetId
     storageBlobPrivateEndpointId: storage.outputs.blobPrivateEndpointId

@@ -28,7 +28,7 @@ param redisSku string = 'Balanced_B0'
 @description('Region for Azure Managed Redis. Leave empty (default) to co-locate with the primary location; override (e.g. via AZURE_REDIS_LOCATION) when the primary region has capacity issues for the chosen Redis SKU. Cross-region traffic from APIM to Redis is TCP-only and adds a few ms of latency.')
 param redisLocation string = ''
 
-@description('Idempotency cache TTL in seconds for blocklist mutations. Range 60-604800. Default 3600.')
+@description('Function durable idempotency replay window in seconds for completed mutations. Pending/uncertain outcomes never expire automatically. Range 60-604800. Default 3600.')
 @minValue(60)
 @maxValue(604800)
 param idempotencyTtlSeconds int = 3600
