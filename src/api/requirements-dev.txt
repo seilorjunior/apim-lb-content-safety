@@ -11,4 +11,4 @@ ruff==0.15.12
 bandit[toml]==1.9.4
 
 # Mutation
-mutmut==2.5.1
+mutmut==3.8.0
